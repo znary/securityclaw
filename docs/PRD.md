@@ -102,7 +102,7 @@
 3. 语义检测过重会影响延迟，需要分级触发。
 
 ## 9. 交付物
-- `safeclaw-security-plugin` 可安装包
+- `safeclaw` 可安装包
 - `safeclaw-admission-cli`（可选）
 - 配置模板、策略模板、事件 schema 文档
 - 最小接入指南与运维 runbook

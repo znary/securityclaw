@@ -1,0 +1,33 @@
+{
+  "id": "safeclaw",
+  "name": "SafeClaw Security",
+  "description": "Runtime policy enforcement, transcript sanitization, and audit events for OpenClaw.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "configPath": {
+        "type": "string",
+        "description": "Path to the SafeClaw YAML policy file, relative to the plugin root or absolute."
+      },
+      "webhookUrl": {
+        "type": "string",
+        "description": "Optional override for SecurityDecisionEvent webhook delivery."
+      },
+      "policyVersion": {
+        "type": "string"
+      },
+      "environment": {
+        "type": "string"
+      },
+      "approvalTtlSeconds": {
+        "type": "number",
+        "minimum": 1
+      },
+      "persistMode": {
+        "type": "string",
+        "enum": ["strict", "compat"]
+      }
+    }
+  }
+}

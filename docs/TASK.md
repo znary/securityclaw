@@ -5,28 +5,34 @@ Last updated: 2026-03-14
 ## Current Stage Progress
 
 ### Completed
-- OpenClaw runtime blocking path is effective for `exec` requests in `prod` scope after gateway reload.
-- Tool name compatibility is in place: `exec` is normalized to `shell.exec` during policy evaluation.
-- Blocking policy coverage has been strengthened:
-  - `prod + shell.exec|exec => block`
-  - `prod + filesystem.list => challenge` (rendered as blocked with approval hint in OpenClaw path)
-- Observability has been improved:
-  - structured `before_tool_call` logs include `trace_id`, `tool`, `raw_tool`, `risk`, `decision`, `rules`, and `reasons`.
-  - blocking reason text returned to users includes reason codes and trace id.
-- Runtime security status can be persisted and inspected via the admin workflow.
+- Runtime decision path has been migrated to a rule-first model:
+  - no `score`/`risk_threshold` fallback
+  - no-rule default is explicit `allow`
+- Tool name compatibility is in place:
+  - `exec` is normalized to `shell.exec` during policy evaluation.
+- Policy model has been simplified:
+  - rule is the only decision dimension
+  - rules support `group` for dashboard grouping
+  - per-rule strategy action supports `allow/warn/challenge/block`
+- Admin dashboard has been updated:
+  - grouped rule display
+  - per-rule action editor
+  - removed group-level and rule-level enable switches
+- Default configuration has been cleaned:
+  - removed `prod`-specific rules and naming
+  - removed risk-related config fields
+- Observability has been aligned:
+  - `SecurityDecisionEvent` no longer includes `risk_score`
+  - `before_tool_call` logs include `trace_id`, `tool`, `decision`, `rules`, `reasons`
 
 ### Verification Notes
-- Real OpenClaw agent test (`openclaw agent --agent main ...`) was rerun after `openclaw gateway restart`.
-- Result confirmed `exec` call was blocked with:
-  - `SCOPE_DENY`
-  - `PROD_SHELL_BLOCK`
-- Gateway log also confirmed normalized tool and matched rule:
-  - `tool=shell.exec raw_tool=exec decision=block rules=prod-shell-block`
+- Plugin unit tests pass (`npm test`).
+- Admin bundle rebuild succeeds (`npm run admin:build`).
+- Dashboard writes action edits to `config/policy.overrides.json` through `PUT /api/strategy`.
 
 ## Next Plan
 
-1. Add explicit automated integration test for OpenClaw gateway path (not only local plugin-level tests) to prevent regressions.
-2. Introduce hot-reload control in admin panel (or a one-click gateway restart helper) to reduce config/apply mismatch.
-3. Expand alias normalization map from observed production tool names and add a documented compatibility matrix.
-4. Add alerting thresholds in runtime status (for example, sudden `warn` spikes) and basic trend view in admin dashboard.
-5. Harden policy change workflow with versioned snapshots and rollback from dashboard.
+1. Add grouped filtering/search in dashboard when rules grow.
+2. Add rule create/delete workflow in dashboard (currently edit-focused).
+3. Add config snapshot + rollback support for override file.
+4. Add integration test covering admin action edit -> runtime decision change.

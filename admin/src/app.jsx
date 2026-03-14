@@ -9,12 +9,27 @@ const DECISION_TEXT = {
   challenge: "需确认",
   block: "拦截"
 };
+const DECISION_OPTIONS = ["allow", "warn", "challenge", "block"];
+
+const DECISION_SOURCE_TEXT = {
+  rule: "规则命中",
+  default: "默认放行",
+  approval: "审批放行"
+};
 
 const RULE_TITLE = {
-  "prod-shell-block": "阻止生产环境高风险命令",
+  "shell-block": "阻止高风险命令",
   "contractor-network-challenge": "外包账号访问外网需确认",
-  "prod-filesystem-list-challenge": "生产目录枚举需确认",
+  "filesystem-list-challenge": "目录枚举需确认",
   "finance-write-warn": "财务范围写入操作提醒"
+};
+
+const RULE_GROUP_TITLE = {
+  file: "文件相关",
+  filesystem: "文件相关",
+  email: "邮件相关",
+  album: "相册相关",
+  general: "通用规则"
 };
 
 function clone(value) {
@@ -36,6 +51,19 @@ function decisionLabel(decision) {
   return DECISION_TEXT[decision] || String(decision || "-");
 }
 
+function decisionSourceLabel(source) {
+  return DECISION_SOURCE_TEXT[source] || "-";
+}
+
+function resourceScopeLabel(scope) {
+  if (!scope) return "-";
+  if (scope === "workspace_inside") return "工作区内";
+  if (scope === "workspace_outside") return "工作区外";
+  if (scope === "system") return "系统目录";
+  if (scope === "none") return "无路径";
+  return scope;
+}
+
 function getJsonError(payload, fallback) {
   if (payload && typeof payload === "object" && payload.error) {
     return String(payload.error);
@@ -54,7 +82,9 @@ async function getJson(url) {
 
 function extractPolicies(strategyPayload) {
   const list = strategyPayload?.strategy?.policies;
-  return Array.isArray(list) ? clone(list) : [];
+  return Array.isArray(list)
+    ? clone(list).map((policy) => ({ ...policy, enabled: true }))
+    : [];
 }
 
 function summarizeMatch(match) {
@@ -77,6 +107,11 @@ function ruleDescription(policy) {
   return `命中条件时执行“${action}”。${match}。`;
 }
 
+function groupLabel(group) {
+  if (!group) return "通用规则";
+  return RULE_GROUP_TITLE[group] || group;
+}
+
 function DecisionTag({ decision }) {
   return <span className={`tag ${decision || "allow"}`}>{decisionLabel(decision)}</span>;
 }
@@ -95,6 +130,16 @@ function App() {
     () => JSON.stringify(policies) !== JSON.stringify(publishedPolicies),
     [policies, publishedPolicies]
   );
+  const groupedPolicies = useMemo(() => {
+    const groups = new Map();
+    policies.forEach((policy, index) => {
+      const key = policy?.group || "general";
+      const list = groups.get(key) || [];
+      list.push({ policy, index });
+      groups.set(key, list);
+    });
+    return Array.from(groups.entries());
+  }, [policies]);
 
   const loadData = useCallback(async (syncRules = true, silent = false) => {
     if (!silent) {
@@ -145,6 +190,7 @@ function App() {
   };
 
   const savePolicies = useCallback(async (nextPolicies) => {
+    const normalizedPolicies = nextPolicies.map((policy) => ({ ...policy, enabled: true }));
     setSaving(true);
     setError("");
     setMessage("规则自动保存中...");
@@ -156,7 +202,7 @@ function App() {
           accept: "application/json"
         },
         body: JSON.stringify({
-          policies: nextPolicies
+          policies: normalizedPolicies
         })
       });
       const payload = await response.json();
@@ -165,7 +211,7 @@ function App() {
       }
       const suffix = payload.restart_required ? " 需要重启 gateway 后完整生效。" : "";
       setMessage(`规则已自动保存。${payload.message || ""}${suffix}`.trim());
-      setPublishedPolicies(clone(nextPolicies));
+      setPublishedPolicies(clone(normalizedPolicies));
       await loadData(false, true);
     } catch (saveError) {
       setError(String(saveError));
@@ -186,16 +232,13 @@ function App() {
     return () => clearTimeout(timer);
   }, [hasPendingChanges, loading, policies, savePolicies, saving]);
 
-  function onToggle(index, checked) {
+  function onDecisionChange(index, decision) {
     setPolicies((current) => {
       const next = clone(current);
-      next[index].enabled = checked;
+      next[index].decision = decision;
+      next[index].enabled = true;
       return next;
     });
-  }
-
-  function onSetAll(enabled) {
-    setPolicies((current) => current.map((rule) => ({ ...rule, enabled })));
   }
 
   return (
@@ -254,6 +297,8 @@ function App() {
               <tr>
                 <th>时间</th>
                 <th>决策</th>
+                <th>来源</th>
+                <th>资源范围</th>
                 <th>环节</th>
                 <th>操作</th>
                 <th>原因</th>
@@ -262,7 +307,7 @@ function App() {
             <tbody>
               {decisions.length === 0 ? (
                 <tr>
-                  <td colSpan={5}>{loading ? "加载中..." : "暂无决策记录"}</td>
+                  <td colSpan={7}>{loading ? "加载中..." : "暂无决策记录"}</td>
                 </tr>
               ) : (
                 decisions.map((item, index) => (
@@ -271,6 +316,8 @@ function App() {
                     <td>
                       <DecisionTag decision={item.decision} />
                     </td>
+                    <td>{decisionSourceLabel(item.decision_source)}</td>
+                    <td>{resourceScopeLabel(item.resource_scope)}</td>
                     <td>{item.hook || "-"}</td>
                     <td>{item.tool || "-"}</td>
                     <td>{toArray(item.reasons).join("，") || "-"}</td>
@@ -285,16 +332,8 @@ function App() {
       <section className="card">
         <div className="card-head">
           <div>
-            <h2>3. 规则列表</h2>
-            <p>只保留规则开关和通俗描述，不展示优先级、风险分等内部细节。</p>
-          </div>
-          <div className="header-actions">
-            <button className="ghost" type="button" onClick={() => onSetAll(true)}>
-              全部开启
-            </button>
-            <button className="ghost" type="button" onClick={() => onSetAll(false)}>
-              全部关闭
-            </button>
+            <h2>3. 规则分组</h2>
+            <p>规则是唯一决策维度，按业务分组管理并配置动作（放行/提醒/确认/拦截）。</p>
           </div>
         </div>
 
@@ -302,25 +341,36 @@ function App() {
           {policies.length === 0 ? (
             <div className="rule">暂无规则</div>
           ) : (
-            policies.map((policy, index) => (
-              <article key={policy.rule_id || String(index)} className="rule">
-                <div className="rule-head">
-                  <div className="rule-title">{RULE_TITLE[policy.rule_id] || policy.rule_id || `规则 ${index + 1}`}</div>
-                  <label className="switch">
-                    <input
-                      type="checkbox"
-                      checked={policy.enabled !== false}
-                      onChange={(event) => onToggle(index, event.target.checked)}
-                    />
-                    <span className="slider" />
-                  </label>
-                </div>
-                <div>
-                  <span className="rule-chip">状态: {policy.enabled === false ? "已关闭" : "已开启"}</span>
-                  <span className="rule-chip">动作: {decisionLabel(policy.decision)}</span>
-                </div>
-                <div className="rule-desc">{ruleDescription(policy)}</div>
-              </article>
+            groupedPolicies.map(([group, entries]) => (
+              <section key={group} className="rule-group">
+                <h3 className="rule-group-title">{groupLabel(group)}</h3>
+                {entries.map(({ policy, index }) => (
+                  <article key={policy.rule_id || String(index)} className="rule">
+                    <div className="rule-head">
+                      <div className="rule-title">{RULE_TITLE[policy.rule_id] || policy.rule_id || `规则 ${index + 1}`}</div>
+                    </div>
+                    <div>
+                      <span className="rule-chip">动作: {decisionLabel(policy.decision)}</span>
+                    </div>
+                    <div className="rule-row">
+                      <label className="rule-label" htmlFor={`decision-${index}`}>策略动作</label>
+                      <select
+                        id={`decision-${index}`}
+                        className="rule-select"
+                        value={policy.decision || "allow"}
+                        onChange={(event) => onDecisionChange(index, event.target.value)}
+                      >
+                        {DECISION_OPTIONS.map((decision) => (
+                          <option key={decision} value={decision}>
+                            {decisionLabel(decision)}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="rule-desc">{ruleDescription(policy)}</div>
+                  </article>
+                ))}
+              </section>
             ))
           )}
         </div>

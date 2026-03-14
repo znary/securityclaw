@@ -9,7 +9,6 @@
     "hook",
     "decision",
     "reason_codes",
-    "risk_score",
     "latency_ms",
     "ts"
   ],
@@ -35,7 +34,6 @@
       "type": "array",
       "items": { "type": "string" }
     },
-    "risk_score": { "type": "number", "minimum": 0, "maximum": 100 },
     "latency_ms": { "type": "number", "minimum": 0 },
     "ts": { "type": "string", "format": "date-time" }
   }

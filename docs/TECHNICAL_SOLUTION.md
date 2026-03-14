@@ -1,9 +1,9 @@
-# SafeClaw Security Plugin 技术方案 v1.0
+# SafeClaw Security Plugin 技术方案 v1.1
 
 ## 1. 方案定位
 本方案实现的是 **Plugin**，不是 OpenClaw 核心平台改造。
-- 我们只依赖公开 Hook 和插件能力。
-- 平台侧不可控能力，通过“边界声明 + 辅助工具”解决。
+- 只依赖公开 Hook 和插件能力。
+- 平台侧不可控能力，通过“边界声明 + 辅助工具”处理。
 
 ## 2. 架构
 
@@ -17,15 +17,14 @@ OpenClaw Runtime Hooks
 
 SafeClaw Plugin Core
    ├─ Rule Engine
-   ├─ Risk Scorer
-   ├─ Decision Engine (allow/warn/challenge/block)
+   ├─ Decision Engine (rule/default/approval)
    ├─ Approval State Machine
    ├─ DLP Engine
    ├─ Event Emitter (schema_versioned)
    └─ Config Manager
 
 External Integrations (optional)
-   ├─ Webhook / Kafka sink
+   ├─ Webhook sink
    ├─ Dashboard backend
    └─ Admission CLI in CI
 ```
@@ -47,17 +46,19 @@ External Integrations (optional)
 ## 3.2 PolicyGuard（before_tool_call）
 ### 输入
 - tool name/group
-- actor、scope、context risk
+- actor、scope、resource_scope、resource_paths
 
 ### 处理
-1. identity check
-2. scope check
-3. risk check
-4. decision merge
+1. 规则匹配（identity/scope/tool/tags/resource_scope/path_prefix）
+2. 决策选择：
+   - 命中规则：按优先级和匹配精度选择规则动作
+   - 无命中：默认放行（`NO_MATCH_DEFAULT_ALLOW`）
+3. challenge 进入审批状态机
 
 ### 输出
 - `allow/warn/challenge/block`
 - reason codes
+- decision source（`rule/default/approval`）
 
 ### 审批状态机（challenge）
 - `pending -> approved/rejected/expired`
@@ -100,8 +101,7 @@ External Integrations (optional)
   "trace_id": "...",
   "hook": "before_tool_call",
   "decision": "challenge",
-  "reason_codes": ["SCOPE_DENY"],
-  "risk_score": 73,
+  "reason_codes": ["FILE_ENUMERATION_REQUIRES_APPROVAL"],
   "latency_ms": 14,
   "ts": "2026-03-13T10:00:00Z"
 }
@@ -114,7 +114,7 @@ External Integrations (optional)
 ## 3.7 Config Manager
 ### 配置源
 - 本地 YAML（必选）
-- 远程配置（可选）
+- 运行时 override JSON（可选）
 
 ### 热更新
 - 拉取 -> 校验 -> 原子替换
@@ -124,7 +124,7 @@ External Integrations (optional)
 - Prompt Injection（主路径）
 - Tool Hijacking（主路径）
 - Data Exfiltration（返回/落盘/消息）
-- Control-plane tool abuse（通过策略封禁）
+- Control-plane tool abuse（通过规则封禁）
 
 ## 5. 非目标（再次确认）
 - 不承诺拦截所有 HTTP/RPC/service 旁路调用（除非接入额外网关）
@@ -135,7 +135,7 @@ External Integrations (optional)
 - 决策路径超时保护（超时后走降级策略）
 - 所有 guard 模块支持独立开关与熔断
 
-## 7. 代码结构建议
+## 7. 代码结构
 ```text
 safeclaw-plugin/
   src/
@@ -147,7 +147,6 @@ safeclaw-plugin/
       output_guard.ts
     engine/
       rule_engine.ts
-      risk_scorer.ts
       decision_engine.ts
       approval_fsm.ts
       dlp_engine.ts
@@ -157,17 +156,17 @@ safeclaw-plugin/
     config/
       loader.ts
       validator.ts
-      hot_reload.ts
+      runtime_override.ts
   config/
     policy.default.yaml
   docs/
     schema.security_event.json
 ```
 
-## 8. 开发计划（可编码）
-1. 先实现 `before_tool_call + decision_engine + event_emitter`
-2. 再实现 `tool_result_persist + message_sending` 双保险脱敏
-3. 最后实现 `approval_fsm + hot_reload + sink`
+## 8. 开发顺序
+1. `before_tool_call + decision_engine + event_emitter`
+2. `tool_result_persist + message_sending` 双保险脱敏
+3. `approval_fsm + override workflow + dashboard`
 
 ## 9. 测试计划
 - 单测：规则匹配、审批状态机、DLP 命中

@@ -2,7 +2,6 @@ import { ConfigManager } from "./config/loader.ts";
 import { ApprovalFsm } from "./engine/approval_fsm.ts";
 import { DecisionEngine } from "./engine/decision_engine.ts";
 import { DlpEngine } from "./engine/dlp_engine.ts";
-import { RiskScorer } from "./engine/risk_scorer.ts";
 import { RuleEngine } from "./engine/rule_engine.ts";
 import { EventEmitter, HttpEventSink } from "./events/emitter.ts";
 import { runContextGuard } from "./hooks/context_guard.ts";
@@ -40,7 +39,6 @@ type PluginResult = {
 type RuntimeDependencies = {
   config: ReturnType<ConfigManager["getConfig"]>;
   ruleEngine: RuleEngine;
-  riskScorer: RiskScorer;
   decisionEngine: DecisionEngine;
   dlpEngine: DlpEngine;
 };
@@ -58,8 +56,8 @@ function buildEvent(
     trace_id: traceId,
     hook,
     decision: result.decision,
+    decision_source: result.decision_source,
     reason_codes: result.reason_codes,
-    risk_score: result.risk_score ?? 0,
     latency_ms: latencyMs,
     ts: nowIso(now)
   };
@@ -115,8 +113,7 @@ async function executeGuard<TInput>(
       mutated_payload: input,
       decision,
       reason_codes: [reason],
-      sanitization_actions: [],
-      risk_score: 0
+      sanitization_actions: []
     };
     const event = buildEvent(hook, traceId, fallback, latencyMs, dependencies.now);
     await dependencies.eventEmitter.emitSecurityEvent(event);
@@ -150,7 +147,6 @@ export function createSafeClawPlugin(options: SafeClawPluginOptions = {}): Plugi
     return {
       config,
       ruleEngine: new RuleEngine(config.policies),
-      riskScorer: new RiskScorer(config.risk),
       decisionEngine: new DecisionEngine(config),
       dlpEngine: new DlpEngine(config.dlp)
     };
@@ -194,7 +190,6 @@ export function createSafeClawPlugin(options: SafeClawPluginOptions = {}): Plugi
               input.security_context?.trace_id ?? traceGenerator(),
               nowIso(now),
               current.ruleEngine,
-              current.riskScorer,
               current.decisionEngine,
               approvals,
             );

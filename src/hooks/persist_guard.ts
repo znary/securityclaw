@@ -41,8 +41,7 @@ export function runPersistGuard(
       decision: "allow",
       reason_codes: ["PERSIST_OK"],
       sanitization_actions: [],
-      security_context: securityContext,
-      risk_score: 0
+      security_context: securityContext
     };
   }
 
@@ -52,8 +51,7 @@ export function runPersistGuard(
       decision: "block",
       reason_codes: ["PERSIST_BLOCKED_DLP"],
       sanitization_actions: sanitizationActions,
-      security_context: securityContext,
-      risk_score: findings.length * 25
+      security_context: securityContext
     };
   }
 
@@ -66,7 +64,6 @@ export function runPersistGuard(
     decision: "warn",
     reason_codes: ["PERSIST_REDACTED"],
     sanitization_actions: sanitizationActions,
-    security_context: securityContext,
-    risk_score: findings.length * 25
+    security_context: securityContext
   };
 }

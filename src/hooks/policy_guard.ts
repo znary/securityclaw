@@ -1,7 +1,6 @@
 import type { ApprovalRecord, BeforeToolCallInput, DecisionContext, GuardComputation, SecurityContext } from "../types.ts";
 import type { ApprovalFsm } from "../engine/approval_fsm.ts";
 import type { DecisionEngine } from "../engine/decision_engine.ts";
-import type { RiskScorer } from "../engine/risk_scorer.ts";
 import type { RuleEngine } from "../engine/rule_engine.ts";
 
 function buildSecurityContext(
@@ -27,7 +26,6 @@ export function runPolicyGuard(
   traceId: string,
   nowIso: string,
   ruleEngine: RuleEngine,
-  riskScorer: RiskScorer,
   decisionEngine: DecisionEngine,
   approvals: ApprovalFsm,
 ): GuardComputation<BeforeToolCallInput> {
@@ -37,6 +35,8 @@ export function runPolicyGuard(
     scope: input.scope,
     tool_name: input.tool_name,
     tags: [...new Set([...(input.tags ?? []), ...securityContext.tags])],
+    resource_scope: input.resource_scope ?? "none",
+    resource_paths: [...(input.resource_paths ?? [])],
     security_context: securityContext
   };
 
@@ -46,29 +46,28 @@ export function runPolicyGuard(
       return {
         mutated_payload: { ...input, security_context: securityContext } as BeforeToolCallInput,
         decision: "allow",
+        decision_source: "approval",
         reason_codes: ["APPROVAL_GRANTED"],
         sanitization_actions: [],
         security_context: securityContext,
-        approval,
-        risk_score: 0
+        approval
       };
     }
     if (approval && approval.status !== "pending") {
       return {
         mutated_payload: { ...input, security_context: securityContext } as BeforeToolCallInput,
         decision: "block",
+        decision_source: "approval",
         reason_codes: [`APPROVAL_${approval.status.toUpperCase()}`],
         sanitization_actions: [],
         security_context: securityContext,
-        approval,
-        risk_score: 0
+        approval
       };
     }
   }
 
   const matches = ruleEngine.match(context);
-  const riskScore = riskScorer.score(context);
-  const outcome = decisionEngine.evaluate(context, riskScore, matches);
+  const outcome = decisionEngine.evaluate(context, matches);
 
   let approval: ApprovalRecord | undefined;
   if (outcome.decision === "challenge") {
@@ -82,10 +81,10 @@ export function runPolicyGuard(
   return {
     mutated_payload: { ...input, security_context: securityContext } as BeforeToolCallInput,
     decision: outcome.decision,
+    decision_source: outcome.decision_source,
     reason_codes: outcome.reason_codes,
     sanitization_actions: [],
     security_context: securityContext,
-    approval,
-    risk_score: outcome.risk_score
+    approval
   };
 }

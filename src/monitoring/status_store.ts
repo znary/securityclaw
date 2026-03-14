@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 type Decision = "allow" | "warn" | "challenge" | "block";
+type DecisionSource = "rule" | "default" | "approval";
 
 type HookCounter = {
   total: number;
@@ -22,7 +23,8 @@ export type StatusRecord = {
   scope?: string;
   tool?: string;
   decision: Decision;
-  risk?: number;
+  decision_source?: DecisionSource;
+  resource_scope?: string;
   reasons: string[];
   rules?: string;
 };

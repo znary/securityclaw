@@ -156,12 +156,6 @@ function handleApi(
         strategy: {
           environment: effective.environment,
           policy_version: effective.policy_version,
-          risk: {
-            base_score: effective.risk.base_score,
-            warn_threshold: effective.risk.warn_threshold,
-            challenge_threshold: effective.risk.challenge_threshold,
-            block_threshold: effective.risk.block_threshold
-          },
           policies: effective.policies
         }
       });
@@ -184,10 +178,6 @@ function handleApi(
             typeof body.environment === "string" ? body.environment : current.environment,
           policy_version:
             typeof body.policy_version === "string" ? body.policy_version : current.policy_version,
-          risk:
-            typeof body.risk === "object" && body.risk !== null
-              ? (body.risk as RuntimeOverride["risk"])
-              : current.risk,
           policies:
             Array.isArray(body.policies)
               ? (body.policies as RuntimeOverride["policies"])

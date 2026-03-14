@@ -54,10 +54,9 @@ Add this to `~/.openclaw/openclaw.json`:
 - `config.adminAutoStart` defaults to `true`, so dashboard starts automatically after plugin load.
 - `config.adminPort` controls dashboard bind port (default `4780`).
 - If you want webhook audit delivery, set `plugins.entries.safeclaw.config.webhookUrl`.
-- `before_tool_call` policy matching uses plugin `environment` as default `scope` (default is `prod`). Keep this value aligned with your target environment so sensitive tools can be blocked by scope rules.
+- `before_tool_call` uses a pure rule-first model: matched rules decide `allow/warn/challenge/block`, otherwise default allow.
 - `before_tool_call` maps `challenge` to a blocked call with an approval-required reason because OpenClaw does not expose a native pause-and-resume approval hook in this path.
 - Blocked/challenged tool calls return a user-facing `blockReason` with `trace_id`, reason codes, and next action text.
-- Default policy includes `prod + filesystem.list => challenge` (in OpenClaw it appears as blocked with approval hint), which covers top-level file enumeration attempts.
-- Decision observability is emitted to logger on every `before_tool_call` with `trace_id`, `tool`, `risk`, `decision`, matched `rules`, and truncated tool `args`. Tune truncation with plugin config `decisionLogMaxLength`.
+- Decision observability is emitted to logger on every `before_tool_call` with `trace_id`, `tool`, `decision`, matched `rules`, and truncated tool `args`. Tune truncation with plugin config `decisionLogMaxLength`.
 - Tool aliases are normalized in runtime (for example `exec` is treated as `shell.exec`) so shell execution policies can still take effect on hosts that use short tool names.
 - `tool_result_persist` and `before_message_write` are kept synchronous to match OpenClaw's runtime contract.

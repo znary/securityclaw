@@ -6,6 +6,7 @@ export type HookName =
   | "message_sending";
 
 export type Decision = "allow" | "warn" | "challenge" | "block";
+export type DecisionSource = "rule" | "default" | "approval";
 export type FailMode = "open" | "close";
 export type ApprovalStatus = "pending" | "approved" | "rejected" | "expired";
 export type PersistMode = "strict" | "compat";
@@ -13,6 +14,7 @@ export type DlpAction = "mask" | "remove";
 export type DlpMode = "warn" | "block" | "sanitize";
 export type PatternType = "pii" | "secret" | "token" | "credential";
 export type ReasonCode = string;
+export type ResourceScope = "none" | "workspace_inside" | "workspace_outside" | "system";
 
 export interface SecurityContext {
   trace_id: string;
@@ -35,6 +37,8 @@ export interface PolicyMatch {
   scope?: string[];
   tool?: string[];
   tags?: string[];
+  resource_scope?: ResourceScope[];
+  path_prefix?: string[];
 }
 
 export interface ChallengeConfig {
@@ -43,10 +47,10 @@ export interface ChallengeConfig {
 
 export interface PolicyRule {
   rule_id: string;
+  group: string;
   enabled: boolean;
   priority: number;
   decision?: Decision;
-  risk_threshold?: number;
   reason_codes: ReasonCode[];
   match: PolicyMatch;
   challenge?: ChallengeConfig;
@@ -96,21 +100,11 @@ export interface SecurityDecisionEvent {
   trace_id: string;
   hook: HookName;
   decision: Decision;
+  decision_source?: DecisionSource;
+  resource_scope?: ResourceScope;
   reason_codes: ReasonCode[];
-  risk_score: number;
   latency_ms: number;
   ts: string;
-}
-
-export interface RiskWeights {
-  base_score: number;
-  block_threshold: number;
-  challenge_threshold: number;
-  warn_threshold: number;
-  tags: Record<string, number>;
-  tools: Record<string, number>;
-  scopes: Record<string, number>;
-  identities: Record<string, number>;
 }
 
 export interface DlpConfig {
@@ -134,7 +128,6 @@ export interface SafeClawConfig {
     persist_mode: PersistMode;
   };
   hooks: Record<HookName, HookControls>;
-  risk: RiskWeights;
   policies: PolicyRule[];
   dlp: DlpConfig;
   event_sink: EventSinkConfig;
@@ -166,6 +159,8 @@ export interface BeforeToolCallInput {
   tool_name: string;
   tool_group?: string;
   tags?: string[];
+  resource_scope?: ResourceScope;
+  resource_paths?: string[];
   security_context?: Partial<SecurityContext>;
   approval_id?: string;
 }
@@ -214,13 +209,15 @@ export interface DecisionContext {
   scope: string;
   tool_name?: string;
   tags: string[];
+  resource_scope: ResourceScope;
+  resource_paths: string[];
   security_context: SecurityContext;
 }
 
 export interface DecisionOutcome {
   decision: Decision;
+  decision_source: DecisionSource;
   reason_codes: ReasonCode[];
-  risk_score: number;
   matched_rules: PolicyRule[];
   challenge_ttl_seconds?: number;
 }
@@ -228,11 +225,11 @@ export interface DecisionOutcome {
 export interface GuardComputation<T = unknown> {
   mutated_payload: T;
   decision: Decision;
+  decision_source?: DecisionSource;
   reason_codes: ReasonCode[];
   sanitization_actions: SanitizationAction[];
   security_context?: SecurityContext;
   approval?: ApprovalRecord;
-  risk_score?: number;
 }
 
 export interface EventSink {

@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-import type { DlpConfig, PolicyRule, RiskWeights, SafeClawConfig } from "../types.ts";
+import type { DlpConfig, PolicyRule, SafeClawConfig } from "../types.ts";
 import { validateConfig } from "./validator.ts";
 
 export type RuntimeOverride = {
@@ -9,12 +9,6 @@ export type RuntimeOverride = {
   environment?: string | undefined;
   policy_version?: string | undefined;
   defaults?: Partial<SafeClawConfig["defaults"]> | undefined;
-  risk?: (Partial<Omit<RiskWeights, "tags" | "tools" | "scopes" | "identities">> & {
-    tags?: Record<string, number>;
-    tools?: Record<string, number>;
-    scopes?: Record<string, number>;
-    identities?: Record<string, number>;
-  }) | undefined;
   policies?: PolicyRule[] | undefined;
   dlp?: (Partial<Omit<DlpConfig, "patterns">> & { patterns?: DlpConfig["patterns"]; }) | undefined;
 };
@@ -42,26 +36,6 @@ export function applyRuntimeOverride(base: SafeClawConfig, override: RuntimeOver
     defaults: {
       ...base.defaults,
       ...(override.defaults ?? {})
-    },
-    risk: {
-      ...base.risk,
-      ...(override.risk ?? {}),
-      tags: {
-        ...base.risk.tags,
-        ...(override.risk?.tags ?? {})
-      },
-      tools: {
-        ...base.risk.tools,
-        ...(override.risk?.tools ?? {})
-      },
-      scopes: {
-        ...base.risk.scopes,
-        ...(override.risk?.scopes ?? {})
-      },
-      identities: {
-        ...base.risk.identities,
-        ...(override.risk?.identities ?? {})
-      }
     },
     dlp: {
       ...base.dlp,

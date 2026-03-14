@@ -1,26 +1,17 @@
 {
-  "updated_at": "2026-03-14T13:21:24.355Z",
-  "environment": "prod",
-  "risk": {
-    "base_score": 35,
-    "warn_threshold": 46,
-    "challenge_threshold": 64,
-    "block_threshold": 80
-  },
+  "updated_at": "2026-03-14T14:38:12.417Z",
+  "environment": "default",
   "policies": [
     {
-      "rule_id": "prod-shell-block",
-      "enabled": false,
+      "rule_id": "shell-block",
+      "group": "filesystem",
+      "enabled": true,
       "priority": 100,
-      "decision": "block",
+      "decision": "warn",
       "reason_codes": [
-        "SCOPE_DENY",
-        "PROD_SHELL_BLOCK"
+        "SHELL_BLOCK"
       ],
       "match": {
-        "scope": [
-          "prod"
-        ],
         "tool": [
           "shell.exec",
           "exec"
@@ -29,10 +20,10 @@
     },
     {
       "rule_id": "contractor-network-challenge",
+      "group": "email",
       "enabled": true,
       "priority": 80,
-      "decision": "challenge",
-      "risk_threshold": 55,
+      "decision": "block",
       "reason_codes": [
         "IDENTITY_REQUIRES_APPROVAL"
       ],
@@ -49,21 +40,18 @@
       }
     },
     {
-      "rule_id": "prod-filesystem-list-challenge",
+      "rule_id": "filesystem-list-challenge",
+      "group": "filesystem",
       "enabled": true,
       "priority": 75,
-      "decision": "challenge",
+      "decision": "allow",
       "reason_codes": [
-        "SCOPE_DENY",
-        "PROD_FILE_ENUMERATION_REQUIRES_APPROVAL"
+        "FILE_ENUMERATION_REQUIRES_APPROVAL"
       ],
       "challenge": {
         "ttl_seconds": 600
       },
       "match": {
-        "scope": [
-          "prod"
-        ],
         "tool": [
           "filesystem.list"
         ]
@@ -71,6 +59,7 @@
     },
     {
       "rule_id": "finance-write-warn",
+      "group": "filesystem",
       "enabled": true,
       "priority": 60,
       "decision": "warn",

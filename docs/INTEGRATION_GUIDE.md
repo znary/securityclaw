@@ -16,10 +16,18 @@ const plugin = createSafeClawPlugin({
 const result = await plugin.hooks.before_tool_call({
   actor_id: "contractor",
   workspace: "payments",
-  scope: "prod",
+  scope: "default",
   tool_name: "network.http"
 });
 ```
+
+## Rule-First Decision Model
+- `before_tool_call` only depends on matched rules.
+- Decision sources are:
+  - `rule`: at least one matching rule provides a decision.
+  - `default`: no rule matched, fallback is allow.
+  - `approval`: previously approved challenge replay.
+- There is no risk scoring or threshold fallback in the decision path.
 
 ## Approval Flow
 - `before_tool_call` returns `decision: "challenge"` and an `approval` record when approval is required.

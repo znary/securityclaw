@@ -61,7 +61,6 @@ export function runOutputGuard(
         ? ["MESSAGE_SANITIZED"]
         : ["MESSAGE_OK"],
     sanitization_actions: [...restricted.actions, ...dlpActions],
-    security_context: securityContext,
-    risk_score: findings.length * 20 + restricted.actions.length * 10
+    security_context: securityContext
   };
 }

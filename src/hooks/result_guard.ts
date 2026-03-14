@@ -83,7 +83,6 @@ export function runResultGuard(
     decision,
     reason_codes: [...schemaErrors, ...(hasFindings ? ["DLP_HIT"] : ["RESULT_OK"])],
     sanitization_actions: findingsToActions(findings),
-    security_context: securityContext,
-    risk_score: findings.length * 20 + schemaErrors.length * 10
+    security_context: securityContext
   };
 }

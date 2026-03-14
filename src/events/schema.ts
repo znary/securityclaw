@@ -9,7 +9,6 @@ export const securityDecisionEventSchema = {
     "hook",
     "decision",
     "reason_codes",
-    "risk_score",
     "latency_ms",
     "ts"
   ],
@@ -19,8 +18,9 @@ export const securityDecisionEventSchema = {
     trace_id: { type: "string" },
     hook: { type: "string" },
     decision: { type: "string" },
+    decision_source: { type: "string" },
+    resource_scope: { type: "string" },
     reason_codes: { type: "array", items: { type: "string" } },
-    risk_score: { type: "number" },
     latency_ms: { type: "number" },
     ts: { type: "string", format: "date-time" }
   }

@@ -1,6 +1,6 @@
 version: "1.0"
 policy_version: "2026-03-13"
-environment: "prod"
+environment: "default"
 defaults:
   approval_ttl_seconds: 900
   persist_mode: "compat"
@@ -25,45 +25,23 @@ hooks:
     enabled: true
     timeout_ms: 40
     fail_mode: "open"
-risk:
-  base_score: 5
-  warn_threshold: 35
-  challenge_threshold: 60
-  block_threshold: 85
-  tags:
-    untrusted: 20
-    privileged: 15
-    exfiltration: 25
-  tools:
-    shell.exec: 45
-    exec: 45
-    filesystem.write: 25
-    network.http: 20
-  scopes:
-    prod: 30
-    finance: 20
-  identities:
-    contractor: 20
-    breakglass: 35
 policies:
-  - rule_id: "prod-shell-block"
+  - rule_id: "shell-block"
+    group: "filesystem"
     enabled: true
     priority: 100
     decision: "block"
     reason_codes:
-      - "SCOPE_DENY"
-      - "PROD_SHELL_BLOCK"
+      - "SHELL_BLOCK"
     match:
-      scope:
-        - "prod"
       tool:
         - "shell.exec"
         - "exec"
   - rule_id: "contractor-network-challenge"
+    group: "email"
     enabled: true
     priority: 80
     decision: "challenge"
-    risk_threshold: 55
     reason_codes:
       - "IDENTITY_REQUIRES_APPROVAL"
     challenge:
@@ -73,21 +51,20 @@ policies:
         - "contractor"
       tool:
         - "network.http"
-  - rule_id: "prod-filesystem-list-challenge"
+  - rule_id: "filesystem-list-challenge"
+    group: "filesystem"
     enabled: true
     priority: 75
     decision: "challenge"
     reason_codes:
-      - "SCOPE_DENY"
-      - "PROD_FILE_ENUMERATION_REQUIRES_APPROVAL"
+      - "FILE_ENUMERATION_REQUIRES_APPROVAL"
     challenge:
       ttl_seconds: 600
     match:
-      scope:
-        - "prod"
       tool:
         - "filesystem.list"
   - rule_id: "finance-write-warn"
+    group: "filesystem"
     enabled: true
     priority: 60
     decision: "warn"

@@ -1,3 +1,4 @@
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -20,14 +21,15 @@ import { ConfigManager } from "./src/config/loader.ts";
 import { applyRuntimeOverride, readRuntimeOverride } from "./src/config/runtime_override.ts";
 import { DecisionEngine } from "./src/engine/decision_engine.ts";
 import { DlpEngine } from "./src/engine/dlp_engine.ts";
-import { RiskScorer } from "./src/engine/risk_scorer.ts";
 import { RuleEngine } from "./src/engine/rule_engine.ts";
 import { EventEmitter, HttpEventSink } from "./src/events/emitter.ts";
 import { RuntimeStatusStore } from "./src/monitoring/status_store.ts";
 import { startAdminServer } from "./admin/server.ts";
 import type {
   DecisionContext,
+  DecisionSource,
   DlpFinding,
+  ResourceScope,
   RuleMatch,
   SafeClawConfig,
   SecurityDecisionEvent
@@ -56,12 +58,135 @@ type ResolvedSecurityConfig = {
 };
 
 const PLUGIN_ROOT = path.dirname(fileURLToPath(import.meta.url));
+const HOME_DIR = os.homedir();
+const PATH_KEY_PATTERN = /(path|paths|file|files|dir|cwd|target|output|input|source|destination|dest|root)/i;
+const SYSTEM_PATH_PREFIXES = ["/etc", "/usr", "/bin", "/sbin", "/var", "/private/etc", "/System", "/Library"];
 
 function resolveScope(ctx: { workspaceDir?: string; channelId?: string }): string {
   if (ctx.workspaceDir) {
     return path.basename(ctx.workspaceDir);
   }
   return ctx.channelId ?? "default";
+}
+
+function isPathLike(value: string, keyHint: string): boolean {
+  if (PATH_KEY_PATTERN.test(keyHint)) {
+    return true;
+  }
+  return (
+    value.startsWith("/") ||
+    value.startsWith("~/") ||
+    value.startsWith("./") ||
+    value.startsWith("../")
+  );
+}
+
+function collectPathCandidates(value: unknown, keyHint = "", depth = 0, output: string[] = []): string[] {
+  if (depth > 4 || output.length >= 24) {
+    return output;
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed && isPathLike(trimmed, keyHint)) {
+      output.push(trimmed);
+    }
+    return output;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectPathCandidates(item, keyHint, depth + 1, output);
+      if (output.length >= 24) {
+        break;
+      }
+    }
+    return output;
+  }
+
+  if (!value || typeof value !== "object") {
+    return output;
+  }
+
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    collectPathCandidates(item, key, depth + 1, output);
+    if (output.length >= 24) {
+      break;
+    }
+  }
+  return output;
+}
+
+function resolvePathCandidate(candidate: string, workspaceDir?: string): string | undefined {
+  if (!candidate) {
+    return undefined;
+  }
+
+  let normalized = candidate;
+  if (normalized.startsWith("~/")) {
+    normalized = path.join(HOME_DIR, normalized.slice(2));
+  } else if (normalized === "~") {
+    normalized = HOME_DIR;
+  }
+
+  if (path.isAbsolute(normalized)) {
+    return path.normalize(normalized);
+  }
+  if (!workspaceDir) {
+    return undefined;
+  }
+  return path.normalize(path.resolve(workspaceDir, normalized));
+}
+
+function isPathInside(rootDir: string, candidate: string): boolean {
+  const relative = path.relative(rootDir, candidate);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function isSystemPath(candidate: string): boolean {
+  return SYSTEM_PATH_PREFIXES.some((prefix) => candidate === prefix || candidate.startsWith(`${prefix}/`));
+}
+
+function extractResourceContext(args: unknown, workspaceDir?: string): { resourceScope: ResourceScope; resourcePaths: string[] } {
+  const candidates = collectPathCandidates(args);
+  const resolved = Array.from(
+    new Set(
+      candidates
+        .map((candidate) => resolvePathCandidate(candidate, workspaceDir))
+        .filter((value): value is string => Boolean(value)),
+    ),
+  ).slice(0, 12);
+
+  if (resolved.length === 0) {
+    return { resourceScope: "none", resourcePaths: [] };
+  }
+
+  let hasInside = false;
+  let hasOutside = false;
+  let hasSystem = false;
+  const normalizedWorkspace = workspaceDir ? path.normalize(workspaceDir) : undefined;
+
+  for (const candidate of resolved) {
+    if (isSystemPath(candidate)) {
+      hasSystem = true;
+    }
+    if (normalizedWorkspace && isPathInside(normalizedWorkspace, candidate)) {
+      hasInside = true;
+    } else {
+      hasOutside = true;
+    }
+  }
+
+  if (hasSystem) {
+    return { resourceScope: "system", resourcePaths: resolved };
+  }
+  if (hasOutside) {
+    return { resourceScope: "workspace_outside", resourcePaths: resolved };
+  }
+  if (hasInside) {
+    return { resourceScope: "workspace_inside", resourcePaths: resolved };
+  }
+  return { resourceScope: "none", resourcePaths: resolved };
 }
 
 function toSecurityConfig(api: OpenClawPluginApi): ResolvedSecurityConfig {
@@ -121,22 +246,27 @@ function buildDecisionContext(
   ctx: PluginHookToolContext | PluginHookAgentContext,
   toolName?: string,
   tags: string[] = [],
+  resourceScope: ResourceScope = "none",
+  resourcePaths: string[] = [],
 ): DecisionContext {
   const workspace = "workspaceDir" in ctx ? ctx.workspaceDir : undefined;
   const runtimeScope = resolveScope({ workspaceDir: workspace, channelId: "channelId" in ctx ? ctx.channelId : undefined });
   const scope = config.environment || runtimeScope;
+  const mergedTags = [...new Set([...tags, `resource_scope:${resourceScope}`])];
   return {
     actor_id: ctx.agentId ?? "unknown-agent",
     scope,
     tool_name: toolName,
-    tags,
+    tags: mergedTags,
+    resource_scope: resourceScope,
+    resource_paths: resourcePaths,
     security_context: {
       trace_id: ctx.runId ?? ctx.sessionId ?? ctx.sessionKey ?? `trace-${Date.now()}`,
       actor_id: ctx.agentId ?? "unknown-agent",
       workspace: workspace ?? "unknown-workspace",
       policy_version: config.policy_version,
       untrusted: false,
-      tags,
+      tags: mergedTags,
       created_at: new Date().toISOString()
     }
   };
@@ -166,7 +296,8 @@ function createEvent(
     | "message_sending",
   decision: "allow" | "warn" | "challenge" | "block",
   reasonCodes: string[],
-  riskScore: number,
+  decisionSource?: DecisionSource,
+  resourceScope?: ResourceScope,
 ): SecurityDecisionEvent {
   return {
     schema_version: "1.0",
@@ -174,8 +305,9 @@ function createEvent(
     trace_id: traceId,
     hook,
     decision,
+    decision_source: decisionSource,
+    resource_scope: resourceScope,
     reason_codes: reasonCodes,
-    risk_score: riskScore,
     latency_ms: 0,
     ts: new Date().toISOString()
   };
@@ -230,15 +362,16 @@ function formatToolBlockReason(
   scope: string,
   traceId: string,
   decision: "challenge" | "block",
+  decisionSource: DecisionSource,
+  resourceScope: ResourceScope,
   reasonCodes: string[],
-  riskScore: number,
   rules: string,
 ): string {
   const reasons = reasonCodes.join(", ");
   if (decision === "challenge") {
-    return `SafeClaw 已拦截敏感调用: ${toolName} (scope=${scope})。原因: ${reasons}。risk=${riskScore} rules=${rules}。请联系管理员审批后重试。trace_id=${traceId}`;
+    return `SafeClaw 已拦截敏感调用: ${toolName} (scope=${scope}, resource_scope=${resourceScope})。来源: ${decisionSource}。原因: ${reasons}。rules=${rules}。请联系管理员审批后重试。trace_id=${traceId}`;
   }
-  return `SafeClaw 已阻断敏感调用: ${toolName} (scope=${scope})。原因: ${reasons}。risk=${riskScore} rules=${rules}。如需放行，请联系安全管理员调整策略。trace_id=${traceId}`;
+  return `SafeClaw 已阻断敏感调用: ${toolName} (scope=${scope}, resource_scope=${resourceScope})。来源: ${decisionSource}。原因: ${reasons}。rules=${rules}。如需放行，请联系安全管理员调整策略。trace_id=${traceId}`;
 }
 
 const plugin = {
@@ -258,7 +391,6 @@ const plugin = {
       : path.resolve(PLUGIN_ROOT, "./runtime/safeclaw-status.json");
     const emitter = createEventEmitter(config);
     const ruleEngine = new RuleEngine(config.policies);
-    const riskScorer = new RiskScorer(config.risk);
     const decisionEngine = new DecisionEngine(config);
     const dlpEngine = new DlpEngine(config.dlp);
     const statusStore = new RuntimeStatusStore(statusPath);
@@ -308,7 +440,7 @@ const plugin = {
         ].join("\n");
         emitEvent(
           emitter,
-          createEvent(traceId, "before_prompt_build", "allow", ["SECURITY_CONTEXT_INJECTED"], 0),
+          createEvent(traceId, "before_prompt_build", "allow", ["SECURITY_CONTEXT_INJECTED"]),
           api.logger,
         );
         statusStore.recordDecision({
@@ -318,7 +450,6 @@ const plugin = {
           actor: ctx.agentId ?? "unknown-agent",
           scope,
           decision: "allow",
-          risk: 0,
           reasons: ["SECURITY_CONTEXT_INJECTED"]
         });
         return { prependSystemContext };
@@ -333,23 +464,32 @@ const plugin = {
         ctx: PluginHookToolContext,
       ): Promise<PluginHookBeforeToolCallResult | void> => {
         const normalizedToolName = normalizeToolName(event.toolName);
-        const decisionContext = buildDecisionContext(config, ctx, normalizedToolName);
+        const rawArguments = (event as { arguments?: unknown }).arguments;
+        const resource = extractResourceContext(rawArguments, ctx.workspaceDir);
+        const decisionContext = buildDecisionContext(
+          config,
+          ctx,
+          normalizedToolName,
+          [],
+          resource.resourceScope,
+          resource.resourcePaths,
+        );
         const matches = ruleEngine.match(decisionContext);
         const rules = matchedRuleIds(matches);
-        const riskScore = riskScorer.score(decisionContext);
-        const outcome = decisionEngine.evaluate(decisionContext, riskScore, matches);
+        const outcome = decisionEngine.evaluate(decisionContext, matches);
         const traceId = decisionContext.security_context.trace_id;
-        const argsSummary = summarizeForLog((event as { arguments?: unknown }).arguments, decisionLogMaxLength);
+        const argsSummary = summarizeForLog(rawArguments, decisionLogMaxLength);
 
         const decisionLog = [
           "safeclaw: before_tool_call",
           `trace_id=${traceId}`,
           `actor=${decisionContext.actor_id}`,
           `scope=${decisionContext.scope}`,
+          `resource_scope=${decisionContext.resource_scope}`,
           `tool=${normalizedToolName}`,
           `raw_tool=${event.toolName}`,
-          `risk=${riskScore}`,
           `decision=${outcome.decision}`,
+          `source=${outcome.decision_source}`,
           `rules=${rules}`,
           `reasons=${outcome.reason_codes.join(",")}`,
           `args=${argsSummary}`
@@ -363,7 +503,14 @@ const plugin = {
 
         emitEvent(
           emitter,
-          createEvent(traceId, "before_tool_call", outcome.decision, outcome.reason_codes, outcome.risk_score),
+          createEvent(
+            traceId,
+            "before_tool_call",
+            outcome.decision,
+            outcome.reason_codes,
+            outcome.decision_source,
+            decisionContext.resource_scope,
+          ),
           api.logger,
         );
         statusStore.recordDecision({
@@ -374,7 +521,8 @@ const plugin = {
           scope: decisionContext.scope,
           tool: normalizedToolName,
           decision: outcome.decision,
-          risk: outcome.risk_score,
+          decision_source: outcome.decision_source,
+          resource_scope: decisionContext.resource_scope,
           reasons: outcome.reason_codes,
           rules
         });
@@ -387,8 +535,9 @@ const plugin = {
               decisionContext.scope,
               traceId,
               outcome.decision,
+              outcome.decision_source,
+              decisionContext.resource_scope,
               outcome.reason_codes,
-              outcome.risk_score,
               rules,
             )
           };
@@ -417,7 +566,6 @@ const plugin = {
           "after_tool_call",
           decision,
           findings.length > 0 ? ["DLP_HIT"] : ["RESULT_OK"],
-          findings.length * 20,
         ),
         api.logger,
       );
@@ -429,7 +577,6 @@ const plugin = {
         scope: decisionContext.scope,
         tool: event.toolName,
         decision,
-        risk: findings.length * 20,
         reasons: findings.length > 0 ? ["DLP_HIT"] : ["RESULT_OK"]
       });
     });
@@ -442,7 +589,7 @@ const plugin = {
         if (sanitized.findings.length === 0) {
           emitEvent(
             emitter,
-            createEvent(traceId, "tool_result_persist", "allow", ["PERSIST_OK"], 0),
+            createEvent(traceId, "tool_result_persist", "allow", ["PERSIST_OK"]),
             api.logger,
           );
           statusStore.recordDecision({
@@ -451,7 +598,6 @@ const plugin = {
             trace_id: traceId,
             tool: event.toolName,
             decision: "allow",
-            risk: 0,
             reasons: ["PERSIST_OK"]
           });
           return undefined;
@@ -463,7 +609,6 @@ const plugin = {
             "tool_result_persist",
             config.defaults.persist_mode === "strict" ? "block" : "warn",
             ["PERSIST_SANITIZED"],
-            sanitized.findings.length * 25,
           ),
           api.logger,
         );
@@ -473,7 +618,6 @@ const plugin = {
           trace_id: traceId,
           tool: event.toolName,
           decision: config.defaults.persist_mode === "strict" ? "block" : "warn",
-          risk: sanitized.findings.length * 25,
           reasons: ["PERSIST_SANITIZED"]
         });
         api.logger.warn?.(
@@ -499,7 +643,6 @@ const plugin = {
           hook: "before_message_write",
           trace_id: `before-write-${Date.now()}`,
           decision: "block",
-          risk: findings.length * 25,
           reasons: ["PERSIST_BLOCKED_DLP"]
         });
         api.logger.warn?.(
@@ -518,7 +661,7 @@ const plugin = {
         if (sanitized.findings.length === 0) {
           emitEvent(
             emitter,
-            createEvent(traceId, "message_sending", "allow", ["MESSAGE_OK"], 0),
+            createEvent(traceId, "message_sending", "allow", ["MESSAGE_OK"]),
             api.logger,
           );
           statusStore.recordDecision({
@@ -526,7 +669,6 @@ const plugin = {
             hook: "message_sending",
             trace_id: traceId,
             decision: "allow",
-            risk: 0,
             reasons: ["MESSAGE_OK"]
           });
           return undefined;
@@ -534,7 +676,7 @@ const plugin = {
         const decision = config.dlp.on_dlp_hit === "block" ? "block" : "warn";
         emitEvent(
           emitter,
-          createEvent(traceId, "message_sending", decision, ["MESSAGE_SANITIZED"], sanitized.findings.length * 20),
+          createEvent(traceId, "message_sending", decision, ["MESSAGE_SANITIZED"]),
           api.logger,
         );
         statusStore.recordDecision({
@@ -542,7 +684,6 @@ const plugin = {
           hook: "message_sending",
           trace_id: traceId,
           decision,
-          risk: sanitized.findings.length * 20,
           reasons: ["MESSAGE_SANITIZED"]
         });
         api.logger.warn?.(

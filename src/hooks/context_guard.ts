@@ -31,7 +31,6 @@ export function runContextGuard(
     decision: "allow",
     reason_codes: [untrusted ? "CONTENT_MARKED_UNTRUSTED" : "CONTEXT_INJECTED"],
     sanitization_actions: [],
-    security_context: securityContext,
-    risk_score: untrusted ? 15 : 0
+    security_context: securityContext
   };
 }

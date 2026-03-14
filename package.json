@@ -10,6 +10,7 @@
     ]
   },
   "scripts": {
-    "test": "node --test --experimental-strip-types"
+    "test": "node --test --experimental-strip-types",
+    "admin": "node --experimental-strip-types ./admin/server.ts"
   }
 }

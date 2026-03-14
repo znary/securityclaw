@@ -71,6 +71,20 @@ policies:
         - "contractor"
       tool:
         - "network.http"
+  - rule_id: "prod-filesystem-list-challenge"
+    enabled: true
+    priority: 75
+    decision: "challenge"
+    reason_codes:
+      - "SCOPE_DENY"
+      - "PROD_FILE_ENUMERATION_REQUIRES_APPROVAL"
+    challenge:
+      ttl_seconds: 600
+    match:
+      scope:
+        - "prod"
+      tool:
+        - "filesystem.list"
   - rule_id: "finance-write-warn"
     enabled: true
     priority: 60

@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SafeClaw 管理后台</title>
+    <style>
+      :root {
+        --bg: #f3f6fb;
+        --panel: #ffffff;
+        --ink: #1a2433;
+        --subtle: #5b6b80;
+        --brand: #1f6feb;
+        --line: #d8e0eb;
+        --warn: #b54708;
+        --block: #b42318;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 24px;
+        font-family: "IBM Plex Sans", "PingFang SC", "Noto Sans SC", sans-serif;
+        color: var(--ink);
+        background: radial-gradient(circle at 0 0, #e9f2ff 0, var(--bg) 35%);
+      }
+      .layout {
+        max-width: 1100px;
+        margin: 0 auto;
+        display: grid;
+        gap: 16px;
+      }
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 16px;
+      }
+      h1, h2 {
+        margin: 0 0 12px;
+      }
+      h1 { font-size: 24px; }
+      h2 { font-size: 18px; }
+      .meta, .totals {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 10px;
+      }
+      .pill {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 10px;
+        background: #fbfdff;
+      }
+      .pill b {
+        display: block;
+        font-size: 13px;
+        color: var(--subtle);
+        margin-bottom: 4px;
+      }
+      .pill span { font-size: 18px; font-weight: 600; }
+      .warn { color: var(--warn); }
+      .block { color: var(--block); }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+      }
+      th, td {
+        text-align: left;
+        border-bottom: 1px solid var(--line);
+        padding: 8px 6px;
+        vertical-align: top;
+      }
+      textarea, input {
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 8px;
+        font: inherit;
+      }
+      textarea {
+        min-height: 260px;
+        font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, monospace;
+        font-size: 12px;
+      }
+      .row {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(120px, 1fr));
+        gap: 10px;
+      }
+      button {
+        margin-top: 10px;
+        background: var(--brand);
+        color: #fff;
+        border: 0;
+        border-radius: 8px;
+        padding: 10px 14px;
+        cursor: pointer;
+      }
+      #message { margin-top: 8px; color: var(--subtle); }
+    </style>
+  </head>
+  <body>
+    <main class="layout">
+      <section class="card">
+        <h1>SafeClaw 管理后台</h1>
+        <div id="paths" class="meta"></div>
+      </section>
+
+      <section class="card">
+        <h2>运行状况</h2>
+        <div id="totals" class="totals"></div>
+      </section>
+
+      <section class="card">
+        <h2>最近决策</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>时间</th>
+              <th>Hook</th>
+              <th>Decision</th>
+              <th>Tool</th>
+              <th>Scope</th>
+              <th>Reasons</th>
+              <th>Trace</th>
+            </tr>
+          </thead>
+          <tbody id="recent"></tbody>
+        </table>
+      </section>
+
+      <section class="card">
+        <h2>拦截策略配置</h2>
+        <div class="row">
+          <label>Environment <input id="environment" /></label>
+          <label>Base Score <input id="baseScore" type="number" /></label>
+          <label>Warn Threshold <input id="warnThreshold" type="number" /></label>
+          <label>Challenge Threshold <input id="challengeThreshold" type="number" /></label>
+          <label>Block Threshold <input id="blockThreshold" type="number" /></label>
+        </div>
+        <p>策略规则（JSON 数组，可增删改）</p>
+        <textarea id="policies"></textarea>
+        <button id="saveBtn">保存策略到 override</button>
+        <div id="message"></div>
+      </section>
+    </main>
+
+    <script>
+      async function getJson(path) {
+        const response = await fetch(path);
+        if (!response.ok) throw new Error(await response.text());
+        return response.json();
+      }
+
+      function toPill(label, value, cls = "") {
+        return `<div class="pill ${cls}"><b>${label}</b><span>${value}</span></div>`;
+      }
+
+      function renderStatus(payload) {
+        const paths = payload.paths || {};
+        document.getElementById("paths").innerHTML = [
+          toPill("Config", paths.config_path || "-"),
+          toPill("Override", paths.override_path || "-"),
+          toPill("Status", paths.status_path || "-"),
+          toPill("Environment", payload.effective?.environment || "-"),
+          toPill("Policy Version", payload.effective?.policy_version || "-")
+        ].join("");
+
+        const totals = payload.totals || {};
+        document.getElementById("totals").innerHTML = [
+          toPill("Total", totals.total || 0),
+          toPill("Allow", totals.allow || 0),
+          toPill("Warn", totals.warn || 0, "warn"),
+          toPill("Challenge", totals.challenge || 0, "warn"),
+          toPill("Block", totals.block || 0, "block")
+        ].join("");
+
+        const rows = (payload.status?.recent_decisions || []).map((item) => `
+          <tr>
+            <td>${item.ts || "-"}</td>
+            <td>${item.hook || "-"}</td>
+            <td>${item.decision || "-"}</td>
+            <td>${item.tool || "-"}</td>
+            <td>${item.scope || "-"}</td>
+            <td>${(item.reasons || []).join(",")}</td>
+            <td>${item.trace_id || "-"}</td>
+          </tr>
+        `).join("");
+        document.getElementById("recent").innerHTML = rows || `<tr><td colspan="7">暂无数据</td></tr>`;
+      }
+
+      function renderStrategy(payload) {
+        const strategy = payload.strategy || {};
+        const risk = strategy.risk || {};
+        document.getElementById("environment").value = strategy.environment || "";
+        document.getElementById("baseScore").value = risk.base_score ?? 0;
+        document.getElementById("warnThreshold").value = risk.warn_threshold ?? 0;
+        document.getElementById("challengeThreshold").value = risk.challenge_threshold ?? 0;
+        document.getElementById("blockThreshold").value = risk.block_threshold ?? 0;
+        document.getElementById("policies").value = JSON.stringify(strategy.policies || [], null, 2);
+      }
+
+      async function refresh() {
+        const [status, strategy] = await Promise.all([
+          getJson("/api/status"),
+          getJson("/api/strategy")
+        ]);
+        renderStatus(status);
+        renderStrategy(strategy);
+      }
+
+      document.getElementById("saveBtn").addEventListener("click", async () => {
+        const message = document.getElementById("message");
+        message.textContent = "保存中...";
+        try {
+          const policies = JSON.parse(document.getElementById("policies").value);
+          const body = {
+            environment: document.getElementById("environment").value,
+            risk: {
+              base_score: Number(document.getElementById("baseScore").value),
+              warn_threshold: Number(document.getElementById("warnThreshold").value),
+              challenge_threshold: Number(document.getElementById("challengeThreshold").value),
+              block_threshold: Number(document.getElementById("blockThreshold").value)
+            },
+            policies
+          };
+          const response = await fetch("/api/strategy", {
+            method: "PUT",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(body)
+          });
+          const payload = await response.json();
+          if (!response.ok || payload.ok === false) {
+            throw new Error(payload.error || "保存失败");
+          }
+          message.textContent = payload.message || "保存成功";
+          await refresh();
+        } catch (error) {
+          message.textContent = `失败: ${String(error)}`;
+        }
+      });
+
+      refresh();
+      setInterval(() => { refresh().catch(() => {}); }, 5000);
+    </script>
+  </body>
+</html>

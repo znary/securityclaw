@@ -10,6 +10,10 @@
         "type": "string",
         "description": "Path to the SafeClaw YAML policy file, relative to the plugin root or absolute."
       },
+      "overridePath": {
+        "type": "string",
+        "description": "Optional JSON override file for runtime strategy updates from the admin panel."
+      },
       "webhookUrl": {
         "type": "string",
         "description": "Optional override for SecurityDecisionEvent webhook delivery."
@@ -27,6 +31,15 @@
       "persistMode": {
         "type": "string",
         "enum": ["strict", "compat"]
+      },
+      "decisionLogMaxLength": {
+        "type": "number",
+        "minimum": 64,
+        "description": "Max serialized argument length included in SafeClaw decision logs."
+      },
+      "statusPath": {
+        "type": "string",
+        "description": "Path to runtime status JSON written by SafeClaw for dashboard monitoring."
       }
     }
   }

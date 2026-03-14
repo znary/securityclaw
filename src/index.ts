@@ -37,6 +37,14 @@ type PluginResult = {
   events: EventEmitter;
 };
 
+type RuntimeDependencies = {
+  config: ReturnType<ConfigManager["getConfig"]>;
+  ruleEngine: RuleEngine;
+  riskScorer: RiskScorer;
+  decisionEngine: DecisionEngine;
+  dlpEngine: DlpEngine;
+};
+
 function buildEvent(
   hook: HookName,
   traceId: string,
@@ -124,19 +132,38 @@ export function createSafeClawPlugin(options: SafeClawPluginOptions = {}): Plugi
   const configManager = options.config
     ? new ConfigManager(options.config)
     : ConfigManager.fromFile(options.config_path ?? "./config/policy.default.yaml");
-  const config = configManager.getConfig();
+  const initialConfig = configManager.getConfig();
   const sink: EventSink | undefined =
     options.event_sink ??
-    (config.event_sink.webhook_url
-      ? new HttpEventSink(config.event_sink.webhook_url, config.event_sink.timeout_ms)
+    (initialConfig.event_sink.webhook_url
+      ? new HttpEventSink(initialConfig.event_sink.webhook_url, initialConfig.event_sink.timeout_ms)
       : undefined);
-  const eventEmitter = new EventEmitter(sink, config.event_sink.max_buffer, config.event_sink.retry_limit);
+  const eventEmitter = new EventEmitter(
+    sink,
+    initialConfig.event_sink.max_buffer,
+    initialConfig.event_sink.retry_limit,
+  );
   const approvals = new ApprovalFsm(now);
-  const ruleEngine = new RuleEngine(config.policies);
-  const riskScorer = new RiskScorer(config.risk);
-  const decisionEngine = new DecisionEngine(config);
-  const dlpEngine = new DlpEngine(config.dlp);
   const traceGenerator = options.generate_trace_id ?? generateTraceId;
+
+  function buildRuntime(config: ReturnType<ConfigManager["getConfig"]>): RuntimeDependencies {
+    return {
+      config,
+      ruleEngine: new RuleEngine(config.policies),
+      riskScorer: new RiskScorer(config.risk),
+      decisionEngine: new DecisionEngine(config),
+      dlpEngine: new DlpEngine(config.dlp)
+    };
+  }
+
+  let runtime = buildRuntime(configManager.getConfig());
+  function getRuntime(): RuntimeDependencies {
+    const latest = configManager.getConfig();
+    if (latest !== runtime.config) {
+      runtime = buildRuntime(latest);
+    }
+    return runtime;
+  }
 
   return {
     hooks: {
@@ -144,73 +171,83 @@ export function createSafeClawPlugin(options: SafeClawPluginOptions = {}): Plugi
         executeGuard(
           "before_prompt_build",
           input,
-          () =>
-            runContextGuard(
+          () => {
+            const current = getRuntime();
+            return runContextGuard(
               input,
-              config.policy_version,
+              current.config.policy_version,
               input.trace_id ?? traceGenerator(),
               nowIso(now),
-            ),
+            );
+          },
           { eventEmitter, configManager, now },
         ),
       before_tool_call: (input: BeforeToolCallInput) =>
         executeGuard(
           "before_tool_call",
           input,
-          () =>
-            runPolicyGuard(
+          () => {
+            const current = getRuntime();
+            return runPolicyGuard(
               input,
-              config.policy_version,
+              current.config.policy_version,
               input.security_context?.trace_id ?? traceGenerator(),
               nowIso(now),
-              ruleEngine,
-              riskScorer,
-              decisionEngine,
+              current.ruleEngine,
+              current.riskScorer,
+              current.decisionEngine,
               approvals,
-            ),
+            );
+          },
           { eventEmitter, configManager, now },
         ),
       after_tool_call: (input: AfterToolCallInput) =>
         executeGuard(
           "after_tool_call",
           input,
-          () =>
-            runResultGuard(
+          () => {
+            const current = getRuntime();
+            return runResultGuard(
               input,
               input.security_context?.trace_id ?? traceGenerator(),
-              config.policy_version,
+              current.config.policy_version,
               nowIso(now),
-              dlpEngine,
-            ),
+              current.dlpEngine,
+            );
+          },
           { eventEmitter, configManager, now },
         ),
       tool_result_persist: (input: ToolResultPersistInput) =>
         executeGuard(
           "tool_result_persist",
           input,
-          () =>
-            runPersistGuard(
+          () => {
+            const current = getRuntime();
+            return runPersistGuard(
               input,
               input.security_context?.trace_id ?? traceGenerator(),
-              config.policy_version,
+              current.config.policy_version,
               nowIso(now),
-              dlpEngine,
-              config.defaults.persist_mode,
-            ),
+              current.dlpEngine,
+              current.config.defaults.persist_mode,
+            );
+          },
           { eventEmitter, configManager, now },
         ),
       message_sending: (input: MessageSendingInput) =>
         executeGuard(
           "message_sending",
           input,
-          () =>
-            runOutputGuard(
+          () => {
+            const current = getRuntime();
+            return runOutputGuard(
               input,
               input.security_context?.trace_id ?? traceGenerator(),
-              config.policy_version,
+              current.config.policy_version,
               nowIso(now),
-              dlpEngine,
-            ),
+              current.dlpEngine,
+            );
+          },
           { eventEmitter, configManager, now },
         )
     },

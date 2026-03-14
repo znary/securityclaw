@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import { ConfigManager } from "../src/config/loader.ts";
 import { ApprovalFsm } from "../src/engine/approval_fsm.ts";
@@ -16,7 +17,7 @@ function createConfig(): SafeClawConfig {
 test("config loader reads default YAML and keeps policies", () => {
   const config = createConfig();
   assert.equal(config.version, "1.0");
-  assert.equal(config.policies.length, 3);
+  assert.equal(config.policies.length, 4);
   assert.equal(config.hooks.before_tool_call.fail_mode, "close");
   assert.equal(config.dlp.patterns[0].name, "email");
 });
@@ -170,6 +171,18 @@ test("plugin creates challenge and approved replay allows execution", async () =
   assert.deepEqual(replay.reason_codes, ["APPROVAL_GRANTED"]);
 });
 
+test("plugin challenges prod filesystem listing", async () => {
+  const plugin = createSafeClawPlugin({ config: createConfig(), generate_trace_id: () => "trace-list" });
+  const result = await plugin.hooks.before_tool_call({
+    actor_id: "employee",
+    workspace: "payments",
+    scope: "prod",
+    tool_name: "filesystem.list"
+  });
+  assert.equal(result.decision, "challenge");
+  assert.deepEqual(result.reason_codes, ["SCOPE_DENY", "PROD_FILE_ENUMERATION_REQUIRES_APPROVAL"]);
+});
+
 test("persist strict blocks sensitive transcript writes", async () => {
   const plugin = createSafeClawPlugin({ config: createConfig(), generate_trace_id: () => "trace-3" });
   const result = await plugin.hooks.tool_result_persist({
@@ -217,4 +230,31 @@ test("hook timeout respects fail-open behavior", async () => {
   });
   assert.equal(result.decision, "allow");
   assert.deepEqual(result.reason_codes, ["HOOK_ERROR"]);
+});
+
+test("plugin applies policy changes after config reload", async () => {
+  const plugin = createSafeClawPlugin({ config: createConfig(), generate_trace_id: () => "trace-reload" });
+  const initial = await plugin.hooks.before_tool_call({
+    actor_id: "employee",
+    workspace: "payments",
+    scope: "dev",
+    tool_name: "shell.exec"
+  });
+  assert.equal(initial.decision, "warn");
+  assert.deepEqual(initial.reason_codes, ["RISK_WARN_THRESHOLD"]);
+
+  const updatedSource = readFileSync("./config/policy.default.yaml", "utf8").replace(
+    "block_threshold: 85",
+    "block_threshold: 40",
+  );
+  plugin.config.reload(updatedSource);
+
+  const updated = await plugin.hooks.before_tool_call({
+    actor_id: "employee",
+    workspace: "payments",
+    scope: "dev",
+    tool_name: "shell.exec"
+  });
+  assert.equal(updated.decision, "block");
+  assert.deepEqual(updated.reason_codes, ["RISK_BLOCK_THRESHOLD"]);
 });

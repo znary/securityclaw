@@ -1,5 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import path from "node:path";
+import { existsSync, readFileSync } from "node:fs";
 
 import type { DlpConfig, PolicyRule, SafeClawConfig } from "../types.ts";
 import { validateConfig } from "./validator.ts";
@@ -45,9 +44,4 @@ export function applyRuntimeOverride(base: SafeClawConfig, override: RuntimeOver
     policies: override.policies ?? base.policies
   };
   return validateConfig(merged as unknown as Record<string, unknown>);
-}
-
-export function writeRuntimeOverride(overridePath: string, override: RuntimeOverride): void {
-  mkdirSync(path.dirname(overridePath), { recursive: true });
-  writeFileSync(overridePath, `${JSON.stringify(override, null, 2)}\n`, "utf8");
 }

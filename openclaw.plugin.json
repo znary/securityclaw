@@ -12,7 +12,11 @@
       },
       "overridePath": {
         "type": "string",
-        "description": "Optional JSON override file for runtime strategy updates from the admin panel."
+        "description": "Legacy JSON override file path for one-time migration into SQLite; no longer used for ongoing strategy persistence."
+      },
+      "dbPath": {
+        "type": "string",
+        "description": "Path to local SQLite database for strategy persistence, runtime status, and decision history."
       },
       "webhookUrl": {
         "type": "string",

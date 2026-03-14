@@ -29,7 +29,7 @@ Add this to `~/.openclaw/openclaw.json`:
         "enabled": true,
         "config": {
           "configPath": "./config/policy.default.yaml",
-          "overridePath": "./config/policy.overrides.json",
+          "dbPath": "./runtime/safeclaw.db",
           "statusPath": "./runtime/safeclaw-status.json",
           "adminAutoStart": true,
           "adminPort": 4780
@@ -49,8 +49,9 @@ Add this to `~/.openclaw/openclaw.json`:
 
 ## Operational Notes
 - `config.configPath` is resolved relative to the plugin root, so `./config/policy.default.yaml` points to this repo's default policy.
-- `config.overridePath` stores dashboard-updated strategy overrides (JSON). Keep this file under versioned backup if needed.
-- `config.statusPath` is written continuously by SafeClaw and powers runtime status in the admin panel.
+- `config.dbPath` is the local SQLite database that stores dashboard strategy overrides, runtime counters, and decision history across restarts.
+- `config.overridePath` is only a legacy migration input (read-once import into SQLite), not an active persistence target.
+- `config.statusPath` is a JSON snapshot generated from SQLite and consumed by the admin panel.
 - `config.adminAutoStart` defaults to `true`, so dashboard starts automatically after plugin load.
 - `config.adminPort` controls dashboard bind port (default `4780`).
 - If you want webhook audit delivery, set `plugins.entries.safeclaw.config.webhookUrl`.

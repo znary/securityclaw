@@ -28,11 +28,11 @@ Last updated: 2026-03-14
 ### Verification Notes
 - Plugin unit tests pass (`npm test`).
 - Admin bundle rebuild succeeds (`npm run admin:build`).
-- Dashboard writes action edits to `config/policy.overrides.json` through `PUT /api/strategy`.
+- Dashboard writes action edits to SQLite (`runtime/safeclaw.db`) through `PUT /api/strategy`.
 
 ## Next Plan
 
 1. Add grouped filtering/search in dashboard when rules grow.
 2. Add rule create/delete workflow in dashboard (currently edit-focused).
-3. Add config snapshot + rollback support for override file.
+3. Add config snapshot + rollback support for strategy records in SQLite.
 4. Add integration test covering admin action edit -> runtime decision change.

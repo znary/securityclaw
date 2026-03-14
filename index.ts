@@ -18,7 +18,7 @@ import type {
 } from "openclaw/plugin-sdk";
 
 import { ConfigManager } from "./src/config/loader.ts";
-import { applyRuntimeOverride, readRuntimeOverride } from "./src/config/runtime_override.ts";
+import { StrategyStore } from "./src/config/strategy_store.ts";
 import { DecisionEngine } from "./src/engine/decision_engine.ts";
 import { DlpEngine } from "./src/engine/dlp_engine.ts";
 import { RuleEngine } from "./src/engine/rule_engine.ts";
@@ -39,6 +39,7 @@ import { deepClone } from "./src/utils.ts";
 type SafeClawPluginConfig = {
   configPath?: string;
   overridePath?: string;
+  dbPath?: string;
   webhookUrl?: string;
   policyVersion?: string;
   environment?: string;
@@ -53,7 +54,8 @@ type SafeClawPluginConfig = {
 type ResolvedSecurityConfig = {
   config: SafeClawConfig;
   configPath: string;
-  overridePath: string;
+  dbPath: string;
+  legacyOverridePath: string;
   overrideLoaded: boolean;
 };
 
@@ -196,7 +198,12 @@ function toSecurityConfig(api: OpenClawPluginApi): ResolvedSecurityConfig {
       ? pluginConfig.configPath
       : path.resolve(PLUGIN_ROOT, pluginConfig.configPath)
     : path.resolve(PLUGIN_ROOT, "./config/policy.default.yaml");
-  const overridePath = pluginConfig.overridePath
+  const dbPath = pluginConfig.dbPath
+    ? path.isAbsolute(pluginConfig.dbPath)
+      ? pluginConfig.dbPath
+      : path.resolve(PLUGIN_ROOT, pluginConfig.dbPath)
+    : path.resolve(PLUGIN_ROOT, "./runtime/safeclaw.db");
+  const legacyOverridePath = pluginConfig.overridePath
     ? path.isAbsolute(pluginConfig.overridePath)
       ? pluginConfig.overridePath
       : path.resolve(PLUGIN_ROOT, pluginConfig.overridePath)
@@ -204,32 +211,39 @@ function toSecurityConfig(api: OpenClawPluginApi): ResolvedSecurityConfig {
   const base = ConfigManager.fromFile(configPath).getConfig();
   let overrideLoaded = false;
   let effective = base;
-  try {
-    const override = readRuntimeOverride(overridePath);
-    if (override) {
-      overrideLoaded = true;
-      effective = applyRuntimeOverride(base, override);
+  const strategyStore = new StrategyStore(dbPath, {
+    legacyOverridePath,
+    logger: {
+      warn: (message: string) => api.logger.warn?.(`safeclaw: strategy store ${message}`)
     }
+  });
+  try {
+    const resolved = strategyStore.readEffective(base);
+    effective = resolved.effective;
+    overrideLoaded = Boolean(resolved.override);
   } catch (error) {
-    api.logger.warn?.(`safeclaw: failed to load override file (${String(error)})`);
+    api.logger.warn?.(`safeclaw: failed to load runtime strategy from sqlite (${String(error)})`);
+  } finally {
+    strategyStore.close();
   }
   return {
     config: {
-    ...effective,
-    policy_version: pluginConfig.policyVersion ?? effective.policy_version,
-    environment: pluginConfig.environment ?? effective.environment,
-    defaults: {
-      ...effective.defaults,
-      approval_ttl_seconds: pluginConfig.approvalTtlSeconds ?? effective.defaults.approval_ttl_seconds,
-      persist_mode: pluginConfig.persistMode ?? effective.defaults.persist_mode
-    },
-    event_sink: {
-      ...effective.event_sink,
-      webhook_url: pluginConfig.webhookUrl ?? effective.event_sink.webhook_url
-    }
+      ...effective,
+      policy_version: pluginConfig.policyVersion ?? effective.policy_version,
+      environment: pluginConfig.environment ?? effective.environment,
+      defaults: {
+        ...effective.defaults,
+        approval_ttl_seconds: pluginConfig.approvalTtlSeconds ?? effective.defaults.approval_ttl_seconds,
+        persist_mode: pluginConfig.persistMode ?? effective.defaults.persist_mode
+      },
+      event_sink: {
+        ...effective.event_sink,
+        webhook_url: pluginConfig.webhookUrl ?? effective.event_sink.webhook_url
+      }
     },
     configPath,
-    overridePath,
+    dbPath,
+    legacyOverridePath,
     overrideLoaded
   };
 }
@@ -389,25 +403,28 @@ const plugin = {
         ? pluginConfig.statusPath
         : path.resolve(PLUGIN_ROOT, pluginConfig.statusPath)
       : path.resolve(PLUGIN_ROOT, "./runtime/safeclaw-status.json");
+    const dbPath = resolved.dbPath;
     const emitter = createEventEmitter(config);
     const ruleEngine = new RuleEngine(config.policies);
     const decisionEngine = new DecisionEngine(config);
     const dlpEngine = new DlpEngine(config.dlp);
-    const statusStore = new RuntimeStatusStore(statusPath);
+    const statusStore = new RuntimeStatusStore({ snapshotPath: statusPath, dbPath });
     statusStore.markBoot({
       environment: config.environment,
       policy_version: config.policy_version,
       policy_count: config.policies.length,
       config_path: resolved.configPath,
-      override_path: resolved.overridePath,
-      override_loaded: resolved.overrideLoaded
+      strategy_db_path: resolved.dbPath,
+      strategy_loaded: resolved.overrideLoaded,
+      legacy_override_path: resolved.legacyOverridePath
     });
     if (adminAutoStart) {
       void startAdminServer({
         port: pluginConfig.adminPort,
         configPath: resolved.configPath,
-        overridePath: resolved.overridePath,
+        legacyOverridePath: resolved.legacyOverridePath,
         statusPath,
+        dbPath,
         logger: {
           info: (message: string) => api.logger.info?.(`safeclaw: ${message}`),
           warn: (message: string) => api.logger.warn?.(`safeclaw: ${message}`)

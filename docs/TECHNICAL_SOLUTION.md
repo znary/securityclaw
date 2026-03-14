@@ -114,7 +114,7 @@ External Integrations (optional)
 ## 3.7 Config Manager
 ### 配置源
 - 本地 YAML（必选）
-- 运行时 override JSON（可选）
+- SQLite 运行时策略覆盖（可选）
 
 ### 热更新
 - 拉取 -> 校验 -> 原子替换
@@ -157,6 +157,7 @@ safeclaw-plugin/
       loader.ts
       validator.ts
       runtime_override.ts
+      strategy_store.ts
   config/
     policy.default.yaml
   docs/
@@ -166,7 +167,7 @@ safeclaw-plugin/
 ## 8. 开发顺序
 1. `before_tool_call + decision_engine + event_emitter`
 2. `tool_result_persist + message_sending` 双保险脱敏
-3. `approval_fsm + override workflow + dashboard`
+3. `approval_fsm + sqlite strategy workflow + dashboard`
 
 ## 9. 测试计划
 - 单测：规则匹配、审批状态机、DLP 命中

@@ -38,3 +38,10 @@ Thumbs.db
 *.tmp
 npm-debug.log*
 coverage/
+
+# SafeClaw runtime artifacts
+runtime/safeclaw-status.json
+runtime/safeclaw.db
+runtime/safeclaw.db-shm
+runtime/safeclaw.db-wal
+config/policy.overrides.json

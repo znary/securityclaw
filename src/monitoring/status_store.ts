@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 type Decision = "allow" | "warn" | "challenge" | "block";
 type DecisionSource = "rule" | "default" | "approval";
@@ -37,11 +38,44 @@ type RuntimeStatus = {
     policy_version: string;
     policy_count: number;
     config_path: string;
-    override_path: string;
-    override_loaded: boolean;
+    strategy_db_path: string;
+    strategy_loaded: boolean;
+    legacy_override_path?: string;
   };
   hooks: Record<string, HookCounter>;
   recent_decisions: StatusRecord[];
+};
+
+type RuntimeStatusStoreOptions = {
+  snapshotPath: string;
+  dbPath?: string;
+  maxRecent?: number;
+};
+
+type HookRow = {
+  hook: string;
+  total: number;
+  allow: number;
+  warn: number;
+  challenge: number;
+  block: number;
+  last_ts: string | null;
+  last_tool: string | null;
+  last_scope: string | null;
+};
+
+type DecisionRow = {
+  ts: string;
+  hook: string;
+  trace_id: string;
+  actor: string | null;
+  scope: string | null;
+  tool: string | null;
+  decision: Decision;
+  decision_source: DecisionSource | null;
+  resource_scope: string | null;
+  reasons_json: string;
+  rules: string | null;
 };
 
 const DEFAULT_HOOKS = [
@@ -76,52 +110,113 @@ function createEmptyStatus(): RuntimeStatus {
       policy_version: "unknown",
       policy_count: 0,
       config_path: "",
-      override_path: "",
-      override_loaded: false
+      strategy_db_path: "",
+      strategy_loaded: false
     },
     hooks,
     recent_decisions: []
   };
 }
 
-function safeReadStatus(filePath: string): RuntimeStatus {
-  if (!existsSync(filePath)) {
-    return createEmptyStatus();
-  }
+function parseReasons(raw: string): string[] {
   try {
-    const parsed = JSON.parse(readFileSync(filePath, "utf8")) as RuntimeStatus;
-    if (!parsed || typeof parsed !== "object") {
-      return createEmptyStatus();
-    }
-    return parsed;
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? parsed.map((item) => String(item)) : [];
   } catch {
-    return createEmptyStatus();
+    return [];
   }
 }
 
-export class RuntimeStatusStore {
-  #path: string;
-  #maxRecent: number;
-  #status: RuntimeStatus;
+function optionalString(value: string | null): string | undefined {
+  return value ?? undefined;
+}
 
-  constructor(statusPath: string, maxRecent = 80) {
-    this.#path = statusPath;
-    this.#maxRecent = maxRecent;
-    mkdirSync(path.dirname(statusPath), { recursive: true });
-    this.#status = safeReadStatus(statusPath);
+const STATUS_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS meta (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS hook_counters (
+  hook TEXT PRIMARY KEY,
+  total INTEGER NOT NULL DEFAULT 0,
+  allow INTEGER NOT NULL DEFAULT 0,
+  warn INTEGER NOT NULL DEFAULT 0,
+  challenge INTEGER NOT NULL DEFAULT 0,
+  block INTEGER NOT NULL DEFAULT 0,
+  last_ts TEXT,
+  last_tool TEXT,
+  last_scope TEXT
+);
+
+CREATE TABLE IF NOT EXISTS decisions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT NOT NULL,
+  hook TEXT NOT NULL,
+  trace_id TEXT NOT NULL,
+  actor TEXT,
+  scope TEXT,
+  tool TEXT,
+  decision TEXT NOT NULL,
+  decision_source TEXT,
+  resource_scope TEXT,
+  reasons_json TEXT NOT NULL,
+  rules TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_decisions_recent ON decisions(id DESC);
+`;
+
+export class RuntimeStatusStore {
+  #snapshotPath: string;
+  #dbPath: string;
+  #maxRecent: number;
+  #db: DatabaseSync;
+
+  constructor(statusPath: string, maxRecent?: number);
+  constructor(options: RuntimeStatusStoreOptions);
+  constructor(statusPathOrOptions: string | RuntimeStatusStoreOptions, maxRecent = 80) {
+    const options =
+      typeof statusPathOrOptions === "string"
+        ? ({
+            snapshotPath: statusPathOrOptions,
+            dbPath: path.resolve(path.dirname(statusPathOrOptions), "safeclaw.db"),
+            maxRecent
+          } satisfies RuntimeStatusStoreOptions)
+        : {
+            snapshotPath: statusPathOrOptions.snapshotPath,
+            dbPath:
+              statusPathOrOptions.dbPath ??
+              path.resolve(path.dirname(statusPathOrOptions.snapshotPath), "safeclaw.db"),
+            maxRecent: statusPathOrOptions.maxRecent ?? 80
+          };
+    this.#snapshotPath = options.snapshotPath;
+    this.#dbPath = options.dbPath ?? path.resolve(path.dirname(options.snapshotPath), "safeclaw.db");
+    this.#maxRecent = options.maxRecent ?? 80;
+    mkdirSync(path.dirname(this.#snapshotPath), { recursive: true });
+    mkdirSync(path.dirname(this.#dbPath), { recursive: true });
+    this.#db = new DatabaseSync(this.#dbPath);
+    this.#db.exec("PRAGMA journal_mode=WAL;");
+    this.#db.exec("PRAGMA synchronous=NORMAL;");
+    this.#db.exec(STATUS_SCHEMA_SQL);
+    this.#ensureDefaultHooks();
+    this.#bootstrapFromLegacySnapshot();
   }
 
   markBoot(config: RuntimeStatus["config"]): void {
     try {
-      this.#status = {
-        ...this.#status,
-        updated_at: new Date().toISOString(),
-        started_at: new Date().toISOString(),
-        config,
-        hooks: Object.fromEntries(DEFAULT_HOOKS.map((hook) => [hook, createHookCounter()])),
-        recent_decisions: []
-      };
-      this.#flush();
+      const now = new Date().toISOString();
+      this.#db.exec("BEGIN IMMEDIATE;");
+      try {
+        this.#setMeta("started_at", now);
+        this.#setMeta("updated_at", now);
+        this.#setMeta("config", JSON.stringify(config));
+        this.#db.exec("COMMIT;");
+      } catch (error) {
+        this.#db.exec("ROLLBACK;");
+        throw error;
+      }
+      this.#flushSnapshot();
     } catch {
       // Swallow status persistence errors to avoid impacting guard execution.
     }
@@ -129,29 +224,347 @@ export class RuntimeStatusStore {
 
   recordDecision(record: StatusRecord): void {
     try {
-      const hooks = { ...this.#status.hooks };
-      const next = hooks[record.hook] ?? createHookCounter();
-      next.total += 1;
-      next[record.decision] += 1;
-      next.last_ts = record.ts;
-      next.last_tool = record.tool;
-      next.last_scope = record.scope;
-      hooks[record.hook] = next;
+      this.#db.exec("BEGIN IMMEDIATE;");
+      try {
+        const allow = record.decision === "allow" ? 1 : 0;
+        const warn = record.decision === "warn" ? 1 : 0;
+        const challenge = record.decision === "challenge" ? 1 : 0;
+        const block = record.decision === "block" ? 1 : 0;
 
-      const recent = [record, ...this.#status.recent_decisions].slice(0, this.#maxRecent);
-      this.#status = {
-        ...this.#status,
-        updated_at: new Date().toISOString(),
-        hooks,
-        recent_decisions: recent
-      };
-      this.#flush();
+        this.#db
+          .prepare(
+            `
+            INSERT INTO hook_counters (
+              hook, total, allow, warn, challenge, block, last_ts, last_tool, last_scope
+            ) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(hook) DO UPDATE SET
+              total = hook_counters.total + 1,
+              allow = hook_counters.allow + excluded.allow,
+              warn = hook_counters.warn + excluded.warn,
+              challenge = hook_counters.challenge + excluded.challenge,
+              block = hook_counters.block + excluded.block,
+              last_ts = excluded.last_ts,
+              last_tool = excluded.last_tool,
+              last_scope = excluded.last_scope
+          `,
+          )
+          .run(record.hook, allow, warn, challenge, block, record.ts, record.tool ?? null, record.scope ?? null);
+
+        this.#db
+          .prepare(
+            `
+            INSERT INTO decisions (
+              ts, hook, trace_id, actor, scope, tool, decision, decision_source, resource_scope, reasons_json, rules
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `,
+          )
+          .run(
+            record.ts,
+            record.hook,
+            record.trace_id,
+            record.actor ?? null,
+            record.scope ?? null,
+            record.tool ?? null,
+            record.decision,
+            record.decision_source ?? null,
+            record.resource_scope ?? null,
+            JSON.stringify(record.reasons),
+            record.rules ?? null,
+          );
+
+        this.#setMeta("updated_at", new Date().toISOString());
+        this.#db.exec("COMMIT;");
+      } catch (error) {
+        this.#db.exec("ROLLBACK;");
+        throw error;
+      }
+      this.#flushSnapshot();
     } catch {
       // Swallow status persistence errors to avoid impacting guard execution.
     }
   }
 
-  #flush(): void {
-    writeFileSync(this.#path, `${JSON.stringify(this.#status, null, 2)}\n`, "utf8");
+  close(): void {
+    this.#db.close();
+  }
+
+  #ensureDefaultHooks(): void {
+    const insert = this.#db.prepare("INSERT OR IGNORE INTO hook_counters (hook) VALUES (?)");
+    for (const hook of DEFAULT_HOOKS) {
+      insert.run(hook);
+    }
+  }
+
+  #setMeta(key: string, value: string): void {
+    this.#db
+      .prepare(
+        `
+        INSERT INTO meta (key, value)
+        VALUES (?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+      `,
+      )
+      .run(key, value);
+  }
+
+  #getMeta(key: string): string | undefined {
+    const row = this.#db.prepare("SELECT value FROM meta WHERE key = ?").get(key) as
+      | { value: string }
+      | undefined;
+    return row?.value;
+  }
+
+  #hasPersistedData(): boolean {
+    const decisionCount = this.#db.prepare("SELECT COUNT(1) AS count FROM decisions").get() as { count: number };
+    if (Number(decisionCount.count ?? 0) > 0) {
+      return true;
+    }
+    const nonZeroHooks = this.#db
+      .prepare("SELECT COUNT(1) AS count FROM hook_counters WHERE total > 0")
+      .get() as { count: number };
+    if (Number(nonZeroHooks.count ?? 0) > 0) {
+      return true;
+    }
+    return Boolean(this.#getMeta("started_at") || this.#getMeta("config"));
+  }
+
+  #bootstrapFromLegacySnapshot(): void {
+    if (this.#hasPersistedData() || !existsSync(this.#snapshotPath)) {
+      return;
+    }
+    let legacy: RuntimeStatus | undefined;
+    try {
+      const raw = JSON.parse(readFileSync(this.#snapshotPath, "utf8")) as unknown;
+      if (raw && typeof raw === "object") {
+        legacy = raw as RuntimeStatus;
+      }
+    } catch {
+      return;
+    }
+    if (!legacy) {
+      return;
+    }
+
+    try {
+      const startedAt =
+        typeof legacy.started_at === "string" && legacy.started_at.length > 0
+          ? legacy.started_at
+          : new Date().toISOString();
+      const updatedAt =
+        typeof legacy.updated_at === "string" && legacy.updated_at.length > 0
+          ? legacy.updated_at
+          : startedAt;
+
+      this.#db.exec("BEGIN IMMEDIATE;");
+      try {
+        this.#setMeta("started_at", startedAt);
+        this.#setMeta("updated_at", updatedAt);
+
+        if (legacy.config && typeof legacy.config === "object") {
+          const legacyConfig = legacy.config as RuntimeStatus["config"] & {
+            override_path?: string;
+            override_loaded?: boolean;
+          };
+          this.#setMeta(
+            "config",
+            JSON.stringify({
+              environment: legacyConfig.environment ?? "unknown",
+              policy_version: legacyConfig.policy_version ?? "unknown",
+              policy_count: legacyConfig.policy_count ?? 0,
+              config_path: legacyConfig.config_path ?? "",
+              strategy_db_path: legacyConfig.strategy_db_path ?? legacyConfig.override_path ?? "",
+              strategy_loaded: legacyConfig.strategy_loaded ?? legacyConfig.override_loaded ?? false,
+              legacy_override_path: legacyConfig.legacy_override_path
+            }),
+          );
+        }
+
+        const upsertHook = this.#db.prepare(
+          `
+          INSERT INTO hook_counters (
+            hook, total, allow, warn, challenge, block, last_ts, last_tool, last_scope
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(hook) DO UPDATE SET
+            total = excluded.total,
+            allow = excluded.allow,
+            warn = excluded.warn,
+            challenge = excluded.challenge,
+            block = excluded.block,
+            last_ts = excluded.last_ts,
+            last_tool = excluded.last_tool,
+            last_scope = excluded.last_scope
+        `,
+        );
+
+        for (const hook of Object.keys(legacy.hooks ?? {})) {
+          const counter = legacy.hooks[hook];
+          upsertHook.run(
+            hook,
+            Number(counter?.total ?? 0),
+            Number(counter?.allow ?? 0),
+            Number(counter?.warn ?? 0),
+            Number(counter?.challenge ?? 0),
+            Number(counter?.block ?? 0),
+            counter?.last_ts ?? null,
+            counter?.last_tool ?? null,
+            counter?.last_scope ?? null,
+          );
+        }
+
+        const insertDecision = this.#db.prepare(
+          `
+          INSERT INTO decisions (
+            ts, hook, trace_id, actor, scope, tool, decision, decision_source, resource_scope, reasons_json, rules
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+        );
+        const legacyDecisions = Array.isArray(legacy.recent_decisions) ? [...legacy.recent_decisions].reverse() : [];
+        for (const item of legacyDecisions) {
+          if (!item || typeof item !== "object") {
+            continue;
+          }
+          insertDecision.run(
+            item.ts ?? new Date().toISOString(),
+            item.hook ?? "unknown",
+            item.trace_id ?? `legacy-${Date.now()}`,
+            item.actor ?? null,
+            item.scope ?? null,
+            item.tool ?? null,
+            item.decision ?? "allow",
+            item.decision_source ?? null,
+            item.resource_scope ?? null,
+            JSON.stringify(Array.isArray(item.reasons) ? item.reasons : []),
+            item.rules ?? null,
+          );
+        }
+
+        this.#db.exec("COMMIT;");
+      } catch (error) {
+        this.#db.exec("ROLLBACK;");
+        throw error;
+      }
+
+      this.#flushSnapshot();
+    } catch {
+      // Ignore bootstrap failures and continue with empty database.
+    }
+  }
+
+  #readStatus(): RuntimeStatus {
+    const fallback = createEmptyStatus();
+    const startedAt = this.#getMeta("started_at") ?? fallback.started_at;
+    const updatedAt = this.#getMeta("updated_at") ?? startedAt;
+
+    const configRaw = this.#getMeta("config");
+    let config = fallback.config;
+    if (configRaw) {
+      try {
+        const parsed = JSON.parse(configRaw) as RuntimeStatus["config"] & {
+          override_path?: string;
+          override_loaded?: boolean;
+        };
+        if (parsed && typeof parsed === "object") {
+          config = {
+            environment: parsed.environment ?? fallback.config.environment,
+            policy_version: parsed.policy_version ?? fallback.config.policy_version,
+            policy_count: parsed.policy_count ?? fallback.config.policy_count,
+            config_path: parsed.config_path ?? fallback.config.config_path,
+            strategy_db_path:
+              parsed.strategy_db_path ?? parsed.override_path ?? fallback.config.strategy_db_path,
+            strategy_loaded:
+              parsed.strategy_loaded ?? parsed.override_loaded ?? fallback.config.strategy_loaded,
+            legacy_override_path: parsed.legacy_override_path
+          };
+        }
+      } catch {
+        // Ignore malformed config payload and keep fallback values.
+      }
+    }
+
+    const hooks: Record<string, HookCounter> = {};
+    for (const hook of DEFAULT_HOOKS) {
+      hooks[hook] = createHookCounter();
+    }
+
+    const rows = this.#db
+      .prepare(
+        `
+        SELECT hook, total, allow, warn, challenge, block, last_ts, last_tool, last_scope
+        FROM hook_counters
+      `,
+      )
+      .all() as HookRow[];
+
+    for (const row of rows) {
+      hooks[row.hook] = {
+        total: Number(row.total ?? 0),
+        allow: Number(row.allow ?? 0),
+        warn: Number(row.warn ?? 0),
+        challenge: Number(row.challenge ?? 0),
+        block: Number(row.block ?? 0),
+        last_ts: optionalString(row.last_ts),
+        last_tool: optionalString(row.last_tool),
+        last_scope: optionalString(row.last_scope)
+      };
+    }
+
+    const decisions = this.#db
+      .prepare(
+        `
+        SELECT ts, hook, trace_id, actor, scope, tool, decision, decision_source, resource_scope, reasons_json, rules
+        FROM decisions
+        ORDER BY id DESC
+        LIMIT ?
+      `,
+      )
+      .all(this.#maxRecent) as DecisionRow[];
+
+    const recent = decisions.map((row) => {
+      const result: StatusRecord = {
+        ts: row.ts,
+        hook: row.hook,
+        trace_id: row.trace_id,
+        decision: row.decision,
+        reasons: parseReasons(row.reasons_json)
+      };
+      const actor = optionalString(row.actor);
+      const scope = optionalString(row.scope);
+      const tool = optionalString(row.tool);
+      const decisionSource = optionalString(row.decision_source);
+      const resourceScope = optionalString(row.resource_scope);
+      const rules = optionalString(row.rules);
+      if (actor) {
+        result.actor = actor;
+      }
+      if (scope) {
+        result.scope = scope;
+      }
+      if (tool) {
+        result.tool = tool;
+      }
+      if (decisionSource) {
+        result.decision_source = decisionSource as DecisionSource;
+      }
+      if (resourceScope) {
+        result.resource_scope = resourceScope;
+      }
+      if (rules) {
+        result.rules = rules;
+      }
+      return result;
+    });
+
+    return {
+      updated_at: updatedAt,
+      started_at: startedAt,
+      config,
+      hooks,
+      recent_decisions: recent
+    };
+  }
+
+  #flushSnapshot(): void {
+    const snapshot = this.#readStatus();
+    writeFileSync(this.#snapshotPath, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8");
   }
 }

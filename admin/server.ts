@@ -5,19 +5,17 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { ConfigManager } from "../src/config/loader.ts";
-import {
-  applyRuntimeOverride,
-  readRuntimeOverride,
-  writeRuntimeOverride,
-  type RuntimeOverride
-} from "../src/config/runtime_override.ts";
+import { applyRuntimeOverride, type RuntimeOverride } from "../src/config/runtime_override.ts";
+import { StrategyStore } from "../src/config/strategy_store.ts";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PUBLIC_DIR = path.resolve(ROOT, "admin/public");
 const DEFAULT_PORT = Number(process.env.SAFECLAW_ADMIN_PORT ?? 4780);
 const DEFAULT_CONFIG_PATH = process.env.SAFECLAW_CONFIG_PATH ?? path.resolve(ROOT, "config/policy.default.yaml");
-const DEFAULT_OVERRIDE_PATH = process.env.SAFECLAW_OVERRIDE_PATH ?? path.resolve(ROOT, "config/policy.overrides.json");
 const DEFAULT_STATUS_PATH = process.env.SAFECLAW_STATUS_PATH ?? path.resolve(ROOT, "runtime/safeclaw-status.json");
+const DEFAULT_DB_PATH = process.env.SAFECLAW_DB_PATH ?? path.resolve(ROOT, "runtime/safeclaw.db");
+const DEFAULT_LEGACY_OVERRIDE_PATH =
+  process.env.SAFECLAW_LEGACY_OVERRIDE_PATH ?? path.resolve(ROOT, "config/policy.overrides.json");
 
 type AdminLogger = {
   info?: (message: string) => void;
@@ -28,8 +26,9 @@ type AdminLogger = {
 type AdminServerOptions = {
   port?: number;
   configPath?: string;
-  overridePath?: string;
+  legacyOverridePath?: string;
   statusPath?: string;
+  dbPath?: string;
   logger?: AdminLogger;
   reclaimPortOnStart?: boolean;
 };
@@ -37,8 +36,9 @@ type AdminServerOptions = {
 type AdminRuntime = {
   port: number;
   configPath: string;
-  overridePath: string;
+  legacyOverridePath: string;
   statusPath: string;
+  dbPath: string;
 };
 
 type AdminServerStartResult = {
@@ -117,16 +117,18 @@ function handleApi(
   res: http.ServerResponse,
   url: URL,
   runtime: AdminRuntime,
+  strategyStore: StrategyStore,
 ): void {
   if (req.method === "GET" && url.pathname === "/api/status") {
     try {
       const status = safeReadStatus(runtime.statusPath);
-      const { effective, override } = readEffectivePolicy(runtime);
+      const { effective, override } = readEffectivePolicy(runtime, strategyStore);
       sendJson(res, 200, {
         paths: {
           config_path: runtime.configPath,
-          override_path: runtime.overridePath,
-          status_path: runtime.statusPath
+          legacy_override_path: runtime.legacyOverridePath,
+          status_path: runtime.statusPath,
+          db_path: runtime.dbPath
         },
         status,
         totals: summarizeTotals(status),
@@ -135,7 +137,7 @@ function handleApi(
           policy_version: effective.policy_version,
           policy_count: effective.policies.length,
           event_sink_enabled: Boolean(effective.event_sink.webhook_url),
-          override_loaded: Boolean(override)
+          strategy_loaded: Boolean(override)
         }
       });
     } catch (error) {
@@ -146,11 +148,11 @@ function handleApi(
 
   if (req.method === "GET" && url.pathname === "/api/strategy") {
     try {
-      const { effective, override } = readEffectivePolicy(runtime);
+      const { effective, override } = readEffectivePolicy(runtime, strategyStore);
       sendJson(res, 200, {
         paths: {
           config_path: runtime.configPath,
-          override_path: runtime.overridePath
+          db_path: runtime.dbPath
         },
         override: override ?? {},
         strategy: {
@@ -169,7 +171,7 @@ function handleApi(
     void (async () => {
       try {
         const body = await readBody(req);
-        const current = readRuntimeOverride(runtime.overridePath) ?? {};
+        const current = strategyStore.readOverride() ?? {};
 
         const nextOverride: RuntimeOverride = {
           ...current,
@@ -186,12 +188,12 @@ function handleApi(
 
         const base = ConfigManager.fromFile(runtime.configPath).getConfig();
         const validated = applyRuntimeOverride(base, nextOverride);
-        writeRuntimeOverride(runtime.overridePath, nextOverride);
+        strategyStore.writeOverride(nextOverride);
 
         sendJson(res, 200, {
           ok: true,
           restart_required: true,
-          message: "策略已保存到 override 文件。若网关未启用热加载，请重启 openclaw-gateway。",
+          message: "策略已保存到本地 SQLite。若网关未启用热加载，请重启 openclaw-gateway。",
           effective: {
             environment: validated.environment,
             policy_version: validated.policy_version,
@@ -229,13 +231,13 @@ function serveStatic(req: http.IncomingMessage, res: http.ServerResponse, url: U
   sendText(res, 200, readFileSync(absolute, "utf8"), contentType);
 }
 
-function readEffectivePolicy(runtime: AdminRuntime): {
+function readEffectivePolicy(runtime: AdminRuntime, strategyStore: StrategyStore): {
   base: ReturnType<ConfigManager["getConfig"]>;
   effective: ReturnType<ConfigManager["getConfig"]>;
   override?: RuntimeOverride;
 } {
   const base = ConfigManager.fromFile(runtime.configPath).getConfig();
-  const override = readRuntimeOverride(runtime.overridePath);
+  const override = strategyStore.readOverride();
   const effective = override ? applyRuntimeOverride(base, override) : base;
   return override !== undefined ? { base, effective, override } : { base, effective };
 }
@@ -244,8 +246,9 @@ function resolveRuntime(options: AdminServerOptions): AdminRuntime {
   return {
     port: options.port ?? DEFAULT_PORT,
     configPath: options.configPath ?? DEFAULT_CONFIG_PATH,
-    overridePath: options.overridePath ?? DEFAULT_OVERRIDE_PATH,
-    statusPath: options.statusPath ?? DEFAULT_STATUS_PATH
+    legacyOverridePath: options.legacyOverridePath ?? DEFAULT_LEGACY_OVERRIDE_PATH,
+    statusPath: options.statusPath ?? DEFAULT_STATUS_PATH,
+    dbPath: options.dbPath ?? DEFAULT_DB_PATH
   };
 }
 
@@ -312,6 +315,24 @@ export function startAdminServer(options: AdminServerOptions = {}): Promise<Admi
     warn: (message: string) => console.warn(message),
     error: (message: string) => console.error(message)
   };
+  const strategyStore = new StrategyStore(runtime.dbPath, {
+    legacyOverridePath: runtime.legacyOverridePath,
+    logger: {
+      warn: (message: string) => logger.warn?.(`SafeClaw strategy store: ${message}`)
+    }
+  });
+  let strategyStoreClosed = false;
+  function closeStrategyStore(): void {
+    if (strategyStoreClosed) {
+      return;
+    }
+    strategyStoreClosed = true;
+    try {
+      strategyStore.close();
+    } catch {
+      // Ignore close errors during shutdown paths.
+    }
+  }
   const reclaimPortOnStart = options.reclaimPortOnStart ?? true;
 
   if (reclaimPortOnStart) {
@@ -322,7 +343,7 @@ export function startAdminServer(options: AdminServerOptions = {}): Promise<Admi
     const server = http.createServer((req, res) => {
       const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
       if (url.pathname.startsWith("/api/")) {
-        handleApi(req, res, url, runtime);
+        handleApi(req, res, url, runtime, strategyStore);
         return;
       }
       serveStatic(req, res, url);
@@ -332,12 +353,14 @@ export function startAdminServer(options: AdminServerOptions = {}): Promise<Admi
     server.once("error", (error: Error & { code?: string }) => {
       if (error.code === "EADDRINUSE") {
         resolved = true;
+        closeStrategyStore();
         logger.warn?.(
           `SafeClaw admin already running on http://127.0.0.1:${runtime.port} (port in use); reusing existing server.`,
         );
         resolve({ state: "already-running", runtime });
         return;
       }
+      closeStrategyStore();
       logger.error?.(`SafeClaw admin failed to start: ${String(error)}`);
       reject(error);
     });
@@ -346,7 +369,8 @@ export function startAdminServer(options: AdminServerOptions = {}): Promise<Admi
       resolved = true;
       logger.info?.(`SafeClaw admin listening on http://127.0.0.1:${runtime.port}`);
       logger.info?.(`Using config: ${runtime.configPath}`);
-      logger.info?.(`Using override: ${runtime.overridePath}`);
+      logger.info?.(`Using strategy db: ${runtime.dbPath}`);
+      logger.info?.(`Using legacy override import path: ${runtime.legacyOverridePath}`);
       logger.info?.(`Using status: ${runtime.statusPath}`);
       resolve({ state: "started", runtime });
     });
@@ -356,6 +380,7 @@ export function startAdminServer(options: AdminServerOptions = {}): Promise<Admi
       if (current.__safeclawAdminStartPromise && resolved) {
         delete current.__safeclawAdminStartPromise;
       }
+      closeStrategyStore();
     });
   });
 

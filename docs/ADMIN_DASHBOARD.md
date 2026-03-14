@@ -16,7 +16,7 @@
 - Unsaved-change protection: auto-refresh will not overwrite local edits.
 
 ## Strategy Configuration
-- The panel writes overrides to `config/policy.overrides.json` via `PUT /api/strategy`.
+- The panel writes overrides to SQLite (`runtime/safeclaw.db`) via `PUT /api/strategy`.
 - Editable fields from UI:
   - full `policies` array, mainly `decision` per rule.
 - Save validation:
@@ -34,5 +34,6 @@
 ## Environment Variables
 - `SAFECLAW_ADMIN_PORT` (default `4780`)
 - `SAFECLAW_CONFIG_PATH` (default `config/policy.default.yaml`)
-- `SAFECLAW_OVERRIDE_PATH` (default `config/policy.overrides.json`)
+- `SAFECLAW_DB_PATH` (default `runtime/safeclaw.db`)
+- `SAFECLAW_LEGACY_OVERRIDE_PATH` (default `config/policy.overrides.json`, read-once migration input)
 - `SAFECLAW_STATUS_PATH` (default `runtime/safeclaw-status.json`)

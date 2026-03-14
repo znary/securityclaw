@@ -3,6 +3,8 @@
     "target": "ES2022",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
+    "jsx": "react-jsx",
+    "allowJs": true,
     "allowImportingTsExtensions": true,
     "strict": true,
     "noEmit": true,
@@ -11,6 +13,7 @@
   },
   "include": [
     "index.ts",
+    "admin/src/**/*.jsx",
     "src/**/*.ts",
     "tests/**/*.ts"
   ]

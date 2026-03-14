@@ -52,8 +52,10 @@ Add this to `~/.openclaw/openclaw.json`:
 - `config.dbPath` is the local SQLite database that stores dashboard strategy overrides, runtime counters, and decision history across restarts.
 - `config.overridePath` is only a legacy migration input (read-once import into SQLite), not an active persistence target.
 - `config.statusPath` is a JSON snapshot generated from SQLite and consumed by the admin panel.
-- `config.adminAutoStart` defaults to `true`, so dashboard starts automatically after plugin load.
+- `config.adminAutoStart` defaults to `true`, so dashboard starts automatically when plugin load happens inside a persistent gateway service/runtime.
 - `config.adminPort` controls dashboard bind port (default `4780`).
+- Plugin load will also refresh the admin frontend bundle when `admin/src` is newer than `admin/public/app.js` or the bundle is missing.
+- Short-lived CLI commands that happen to load plugins (for example `openclaw gateway restart`) will skip dashboard auto-start; use `npm run admin` if you want a standalone local dashboard during debugging.
 - If you want webhook audit delivery, set `plugins.entries.safeclaw.config.webhookUrl`.
 - `before_tool_call` uses a pure rule-first model: matched rules decide `allow/warn/challenge/block`, otherwise default allow.
 - `before_tool_call` maps `challenge` to a blocked call with an approval-required reason because OpenClaw does not expose a native pause-and-resume approval hook in this path.

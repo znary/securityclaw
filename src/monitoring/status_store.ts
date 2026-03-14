@@ -208,9 +208,24 @@ export class RuntimeStatusStore {
       const now = new Date().toISOString();
       this.#db.exec("BEGIN IMMEDIATE;");
       try {
-        this.#setMeta("started_at", now);
-        this.#setMeta("updated_at", now);
-        this.#setMeta("config", JSON.stringify(config));
+        this.#writeConfigMeta(config, now, true);
+        this.#db.exec("COMMIT;");
+      } catch (error) {
+        this.#db.exec("ROLLBACK;");
+        throw error;
+      }
+      this.#flushSnapshot();
+    } catch {
+      // Swallow status persistence errors to avoid impacting guard execution.
+    }
+  }
+
+  updateConfig(config: RuntimeStatus["config"]): void {
+    try {
+      const now = new Date().toISOString();
+      this.#db.exec("BEGIN IMMEDIATE;");
+      try {
+        this.#writeConfigMeta(config, now, false);
         this.#db.exec("COMMIT;");
       } catch (error) {
         this.#db.exec("ROLLBACK;");
@@ -305,6 +320,14 @@ export class RuntimeStatusStore {
       `,
       )
       .run(key, value);
+  }
+
+  #writeConfigMeta(config: RuntimeStatus["config"], now: string, includeStartedAt: boolean): void {
+    if (includeStartedAt) {
+      this.#setMeta("started_at", now);
+    }
+    this.#setMeta("updated_at", now);
+    this.#setMeta("config", JSON.stringify(config));
   }
 
   #getMeta(key: string): string | undefined {

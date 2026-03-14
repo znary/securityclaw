@@ -17,14 +17,15 @@ import type {
   PluginHookToolResultPersistResult
 } from "openclaw/plugin-sdk";
 
-import { ConfigManager } from "./src/config/loader.ts";
-import { StrategyStore } from "./src/config/strategy_store.ts";
+import { LiveConfigResolver, type LiveConfigSnapshot } from "./src/config/live_config.ts";
 import { DecisionEngine } from "./src/engine/decision_engine.ts";
 import { DlpEngine } from "./src/engine/dlp_engine.ts";
 import { RuleEngine } from "./src/engine/rule_engine.ts";
 import { EventEmitter, HttpEventSink } from "./src/events/emitter.ts";
 import { RuntimeStatusStore } from "./src/monitoring/status_store.ts";
 import { startAdminServer } from "./admin/server.ts";
+import { ensureAdminAssetsBuilt } from "./src/admin/build.ts";
+import { shouldAutoStartAdminServer } from "./src/admin/runtime_guard.ts";
 import type {
   DecisionContext,
   DecisionSource,
@@ -34,7 +35,6 @@ import type {
   SafeClawConfig,
   SecurityDecisionEvent
 } from "./src/types.ts";
-import { deepClone } from "./src/utils.ts";
 
 type SafeClawPluginConfig = {
   configPath?: string;
@@ -51,11 +51,18 @@ type SafeClawPluginConfig = {
   adminPort?: number;
 };
 
-type ResolvedSecurityConfig = {
-  config: SafeClawConfig;
+type ResolvedPluginRuntime = {
   configPath: string;
   dbPath: string;
   legacyOverridePath: string;
+};
+
+type RuntimeDependencies = {
+  config: SafeClawConfig;
+  ruleEngine: RuleEngine;
+  decisionEngine: DecisionEngine;
+  dlpEngine: DlpEngine;
+  emitter: EventEmitter;
   overrideLoaded: boolean;
 };
 
@@ -191,7 +198,7 @@ function extractResourceContext(args: unknown, workspaceDir?: string): { resourc
   return { resourceScope: "none", resourcePaths: resolved };
 }
 
-function toSecurityConfig(api: OpenClawPluginApi): ResolvedSecurityConfig {
+function resolvePluginRuntime(api: OpenClawPluginApi): ResolvedPluginRuntime {
   const pluginConfig = (api.pluginConfig ?? {}) as SafeClawPluginConfig;
   const configPath = pluginConfig.configPath
     ? path.isAbsolute(pluginConfig.configPath)
@@ -208,43 +215,10 @@ function toSecurityConfig(api: OpenClawPluginApi): ResolvedSecurityConfig {
       ? pluginConfig.overridePath
       : path.resolve(PLUGIN_ROOT, pluginConfig.overridePath)
     : path.resolve(PLUGIN_ROOT, "./config/policy.overrides.json");
-  const base = ConfigManager.fromFile(configPath).getConfig();
-  let overrideLoaded = false;
-  let effective = base;
-  const strategyStore = new StrategyStore(dbPath, {
-    legacyOverridePath,
-    logger: {
-      warn: (message: string) => api.logger.warn?.(`safeclaw: strategy store ${message}`)
-    }
-  });
-  try {
-    const resolved = strategyStore.readEffective(base);
-    effective = resolved.effective;
-    overrideLoaded = Boolean(resolved.override);
-  } catch (error) {
-    api.logger.warn?.(`safeclaw: failed to load runtime strategy from sqlite (${String(error)})`);
-  } finally {
-    strategyStore.close();
-  }
   return {
-    config: {
-      ...effective,
-      policy_version: pluginConfig.policyVersion ?? effective.policy_version,
-      environment: pluginConfig.environment ?? effective.environment,
-      defaults: {
-        ...effective.defaults,
-        approval_ttl_seconds: pluginConfig.approvalTtlSeconds ?? effective.defaults.approval_ttl_seconds,
-        persist_mode: pluginConfig.persistMode ?? effective.defaults.persist_mode
-      },
-      event_sink: {
-        ...effective.event_sink,
-        webhook_url: pluginConfig.webhookUrl ?? effective.event_sink.webhook_url
-      }
-    },
     configPath,
     dbPath,
-    legacyOverridePath,
-    overrideLoaded
+    legacyOverridePath
   };
 }
 
@@ -253,6 +227,46 @@ function createEventEmitter(config: SafeClawConfig): EventEmitter {
     ? new HttpEventSink(config.event_sink.webhook_url, config.event_sink.timeout_ms)
     : undefined;
   return new EventEmitter(sink, config.event_sink.max_buffer, config.event_sink.retry_limit);
+}
+
+function applyPluginConfigOverrides(config: SafeClawConfig, pluginConfig: SafeClawPluginConfig): SafeClawConfig {
+  return {
+    ...config,
+    policy_version: pluginConfig.policyVersion ?? config.policy_version,
+    environment: pluginConfig.environment ?? config.environment,
+    defaults: {
+      ...config.defaults,
+      approval_ttl_seconds: pluginConfig.approvalTtlSeconds ?? config.defaults.approval_ttl_seconds,
+      persist_mode: pluginConfig.persistMode ?? config.defaults.persist_mode
+    },
+    event_sink: {
+      ...config.event_sink,
+      webhook_url: pluginConfig.webhookUrl ?? config.event_sink.webhook_url
+    }
+  };
+}
+
+function buildRuntime(snapshot: LiveConfigSnapshot): RuntimeDependencies {
+  return {
+    config: snapshot.config,
+    ruleEngine: new RuleEngine(snapshot.config.policies),
+    decisionEngine: new DecisionEngine(snapshot.config),
+    dlpEngine: new DlpEngine(snapshot.config.dlp),
+    emitter: createEventEmitter(snapshot.config),
+    overrideLoaded: snapshot.overrideLoaded
+  };
+}
+
+function toStatusConfig(config: SafeClawConfig, overrideLoaded: boolean, resolved: ResolvedPluginRuntime) {
+  return {
+    environment: config.environment,
+    policy_version: config.policy_version,
+    policy_count: config.policies.length,
+    config_path: resolved.configPath,
+    strategy_db_path: resolved.dbPath,
+    strategy_loaded: overrideLoaded,
+    legacy_override_path: resolved.legacyOverridePath
+  };
 }
 
 function buildDecisionContext(
@@ -393,8 +407,7 @@ const plugin = {
   name: "SafeClaw Security",
   description: "Runtime policy enforcement, transcript sanitization, and audit events for OpenClaw.",
   register(api: OpenClawPluginApi) {
-    const resolved = toSecurityConfig(api);
-    const config = resolved.config;
+    const resolved = resolvePluginRuntime(api);
     const pluginConfig = (api.pluginConfig ?? {}) as SafeClawPluginConfig;
     const adminAutoStart = pluginConfig.adminAutoStart ?? true;
     const decisionLogMaxLength = pluginConfig.decisionLogMaxLength ?? 240;
@@ -404,48 +417,79 @@ const plugin = {
         : path.resolve(PLUGIN_ROOT, pluginConfig.statusPath)
       : path.resolve(PLUGIN_ROOT, "./runtime/safeclaw-status.json");
     const dbPath = resolved.dbPath;
-    const emitter = createEventEmitter(config);
-    const ruleEngine = new RuleEngine(config.policies);
-    const decisionEngine = new DecisionEngine(config);
-    const dlpEngine = new DlpEngine(config.dlp);
     const statusStore = new RuntimeStatusStore({ snapshotPath: statusPath, dbPath });
-    statusStore.markBoot({
-      environment: config.environment,
-      policy_version: config.policy_version,
-      policy_count: config.policies.length,
-      config_path: resolved.configPath,
-      strategy_db_path: resolved.dbPath,
-      strategy_loaded: resolved.overrideLoaded,
-      legacy_override_path: resolved.legacyOverridePath
+    const liveConfig = new LiveConfigResolver({
+      configPath: resolved.configPath,
+      dbPath,
+      legacyOverridePath: resolved.legacyOverridePath,
+      logger: {
+        info: (message: string) => api.logger.info?.(message),
+        warn: (message: string) => api.logger.warn?.(message)
+      },
+      transform: (config: SafeClawConfig) => applyPluginConfigOverrides(config, pluginConfig),
+      onReload: (snapshot: LiveConfigSnapshot) => {
+        statusStore.updateConfig(toStatusConfig(snapshot.config, snapshot.overrideLoaded, resolved));
+        api.logger.info?.(
+          `safeclaw: policy refresh env=${snapshot.config.environment} policy_version=${snapshot.config.policy_version} rules=${snapshot.config.policies.length}`,
+        );
+      }
+    });
+    let runtime = buildRuntime(liveConfig.getSnapshot());
+    function getRuntime(): RuntimeDependencies {
+      const snapshot = liveConfig.getSnapshot();
+      if (snapshot.config !== runtime.config || snapshot.overrideLoaded !== runtime.overrideLoaded) {
+        runtime = buildRuntime(snapshot);
+      }
+      return runtime;
+    }
+
+    statusStore.markBoot(toStatusConfig(runtime.config, runtime.overrideLoaded, resolved));
+    const adminBuildPromise = ensureAdminAssetsBuilt({
+      logger: {
+        info: (message: string) => api.logger.info?.(`safeclaw: ${message}`)
+      }
+    }).catch((error) => {
+      api.logger.warn?.(`safeclaw: failed to refresh admin bundle (${String(error)})`);
     });
     if (adminAutoStart) {
-      void startAdminServer({
-        port: pluginConfig.adminPort,
-        configPath: resolved.configPath,
-        legacyOverridePath: resolved.legacyOverridePath,
-        statusPath,
-        dbPath,
-        logger: {
-          info: (message: string) => api.logger.info?.(`safeclaw: ${message}`),
-          warn: (message: string) => api.logger.warn?.(`safeclaw: ${message}`)
-        }
-      }).catch((error) => {
-        api.logger.warn?.(`safeclaw: failed to auto-start admin dashboard (${String(error)})`);
-      });
+      const autoStartDecision = shouldAutoStartAdminServer(process.env);
+      if (autoStartDecision.enabled) {
+        void adminBuildPromise.then(() =>
+          startAdminServer({
+            port: pluginConfig.adminPort,
+            configPath: resolved.configPath,
+            legacyOverridePath: resolved.legacyOverridePath,
+            statusPath,
+            dbPath,
+            unrefOnStart: true,
+            logger: {
+              info: (message: string) => api.logger.info?.(`safeclaw: ${message}`),
+              warn: (message: string) => api.logger.warn?.(`safeclaw: ${message}`)
+            }
+          }).catch((error) => {
+            api.logger.warn?.(`safeclaw: failed to auto-start admin dashboard (${String(error)})`);
+          }),
+        );
+      } else {
+        api.logger.info?.(
+          `safeclaw: admin auto-start skipped in ${autoStartDecision.reason}; use npm run admin for standalone dashboard`,
+        );
+      }
     } else {
       api.logger.info?.("safeclaw: admin auto-start disabled by config");
     }
 
     api.logger.info?.(
-      `safeclaw: boot env=${config.environment} policy_version=${config.policy_version} dlp_mode=${config.dlp.on_dlp_hit} rules=${config.policies.length}`,
+      `safeclaw: boot env=${runtime.config.environment} policy_version=${runtime.config.policy_version} dlp_mode=${runtime.config.dlp.on_dlp_hit} rules=${runtime.config.policies.length}`,
     );
-    if (!config.event_sink.webhook_url) {
+    if (!runtime.config.event_sink.webhook_url) {
       api.logger.info?.("safeclaw: event sink disabled (webhook_url is empty), using logger-only observability");
     }
 
     api.on(
       "before_prompt_build",
       async (event: PluginHookBeforePromptBuildEvent, ctx: PluginHookAgentContext): Promise<PluginHookBeforePromptBuildResult> => {
+        const current = getRuntime();
         const traceId = ctx.runId ?? ctx.sessionId ?? ctx.sessionKey ?? `trace-${Date.now()}`;
         const scope = resolveScope({ workspaceDir: ctx.workspaceDir, channelId: ctx.channelId });
         const prependSystemContext = [
@@ -453,10 +497,10 @@ const plugin = {
           `trace_id=${traceId}`,
           `agent_id=${ctx.agentId ?? "unknown-agent"}`,
           `scope=${scope}`,
-          `policy_version=${config.policy_version}`
+          `policy_version=${current.config.policy_version}`
         ].join("\n");
         emitEvent(
-          emitter,
+          current.emitter,
           createEvent(traceId, "before_prompt_build", "allow", ["SECURITY_CONTEXT_INJECTED"]),
           api.logger,
         );
@@ -480,20 +524,21 @@ const plugin = {
         event: PluginHookBeforeToolCallEvent,
         ctx: PluginHookToolContext,
       ): Promise<PluginHookBeforeToolCallResult | void> => {
+        const current = getRuntime();
         const normalizedToolName = normalizeToolName(event.toolName);
         const rawArguments = (event as { arguments?: unknown }).arguments;
         const resource = extractResourceContext(rawArguments, ctx.workspaceDir);
         const decisionContext = buildDecisionContext(
-          config,
+          current.config,
           ctx,
           normalizedToolName,
           [],
           resource.resourceScope,
           resource.resourcePaths,
         );
-        const matches = ruleEngine.match(decisionContext);
+        const matches = current.ruleEngine.match(decisionContext);
         const rules = matchedRuleIds(matches);
-        const outcome = decisionEngine.evaluate(decisionContext, matches);
+        const outcome = current.decisionEngine.evaluate(decisionContext, matches);
         const traceId = decisionContext.security_context.trace_id;
         const argsSummary = summarizeForLog(rawArguments, decisionLogMaxLength);
 
@@ -519,7 +564,7 @@ const plugin = {
         }
 
         emitEvent(
-          emitter,
+          current.emitter,
           createEvent(
             traceId,
             "before_tool_call",
@@ -566,18 +611,19 @@ const plugin = {
     );
 
     api.on("after_tool_call", async (event, ctx) => {
-      const decisionContext = buildDecisionContext(config, ctx, event.toolName);
+      const current = getRuntime();
+      const decisionContext = buildDecisionContext(current.config, ctx, event.toolName);
       const traceId = decisionContext.security_context.trace_id;
-      const findings = dlpEngine.scan(event.result);
+      const findings = current.dlpEngine.scan(event.result);
       const decision =
-        findings.length === 0 ? "allow" : config.dlp.on_dlp_hit === "block" ? "block" : "warn";
+        findings.length === 0 ? "allow" : current.config.dlp.on_dlp_hit === "block" ? "block" : "warn";
       if (findings.length > 0) {
         api.logger.warn?.(
           `safeclaw: after_tool_call findings tool=${event.toolName} findings=${findingsToText(findings)}`,
         );
       }
       emitEvent(
-        emitter,
+        current.emitter,
         createEvent(
           traceId,
           "after_tool_call",
@@ -601,11 +647,12 @@ const plugin = {
     api.on(
       "tool_result_persist",
       (event: PluginHookToolResultPersistEvent): PluginHookToolResultPersistResult | void => {
+        const current = getRuntime();
         const traceId = event.toolCallId ?? event.toolName ?? `trace-${Date.now()}`;
-        const sanitized = sanitizeUnknown(dlpEngine, event.message);
+        const sanitized = sanitizeUnknown(current.dlpEngine, event.message);
         if (sanitized.findings.length === 0) {
           emitEvent(
-            emitter,
+            current.emitter,
             createEvent(traceId, "tool_result_persist", "allow", ["PERSIST_OK"]),
             api.logger,
           );
@@ -620,11 +667,11 @@ const plugin = {
           return undefined;
         }
         emitEvent(
-          emitter,
+          current.emitter,
           createEvent(
             traceId,
             "tool_result_persist",
-            config.defaults.persist_mode === "strict" ? "block" : "warn",
+            current.config.defaults.persist_mode === "strict" ? "block" : "warn",
             ["PERSIST_SANITIZED"],
           ),
           api.logger,
@@ -634,11 +681,11 @@ const plugin = {
           hook: "tool_result_persist",
           trace_id: traceId,
           tool: event.toolName,
-          decision: config.defaults.persist_mode === "strict" ? "block" : "warn",
+          decision: current.config.defaults.persist_mode === "strict" ? "block" : "warn",
           reasons: ["PERSIST_SANITIZED"]
         });
         api.logger.warn?.(
-          `safeclaw: tool_result_persist trace_id=${traceId} tool=${event.toolName} decision=${config.defaults.persist_mode === "strict" ? "block" : "warn"} findings=${findingsToText(sanitized.findings)}`,
+          `safeclaw: tool_result_persist trace_id=${traceId} tool=${event.toolName} decision=${current.config.defaults.persist_mode === "strict" ? "block" : "warn"} findings=${findingsToText(sanitized.findings)}`,
         );
         return { message: sanitized.value };
       },
@@ -648,10 +695,11 @@ const plugin = {
     api.on(
       "before_message_write",
       (event: PluginHookBeforeMessageWriteEvent) => {
-        if (config.defaults.persist_mode !== "strict") {
+        const current = getRuntime();
+        if (current.config.defaults.persist_mode !== "strict") {
           return undefined;
         }
-        const findings = dlpEngine.scan(event.message);
+        const findings = current.dlpEngine.scan(event.message);
         if (findings.length === 0) {
           return undefined;
         }
@@ -673,11 +721,12 @@ const plugin = {
     api.on(
       "message_sending",
       async (event: PluginHookMessageSendingEvent, ctx): Promise<PluginHookMessageSendingResult | void> => {
+        const current = getRuntime();
         const traceId = ctx.conversationId ?? ctx.accountId ?? `trace-${Date.now()}`;
-        const sanitized = sanitizeUnknown(dlpEngine, event.content);
+        const sanitized = sanitizeUnknown(current.dlpEngine, event.content);
         if (sanitized.findings.length === 0) {
           emitEvent(
-            emitter,
+            current.emitter,
             createEvent(traceId, "message_sending", "allow", ["MESSAGE_OK"]),
             api.logger,
           );
@@ -690,9 +739,9 @@ const plugin = {
           });
           return undefined;
         }
-        const decision = config.dlp.on_dlp_hit === "block" ? "block" : "warn";
+        const decision = current.config.dlp.on_dlp_hit === "block" ? "block" : "warn";
         emitEvent(
-          emitter,
+          current.emitter,
           createEvent(traceId, "message_sending", decision, ["MESSAGE_SANITIZED"]),
           api.logger,
         );
@@ -706,7 +755,7 @@ const plugin = {
         api.logger.warn?.(
           `safeclaw: message_sending trace_id=${traceId} decision=${decision} findings=${findingsToText(sanitized.findings)}`,
         );
-        if (config.dlp.on_dlp_hit === "block") {
+        if (current.config.dlp.on_dlp_hit === "block") {
           return { cancel: true };
         }
         return { content: sanitized.value as string };
@@ -714,7 +763,7 @@ const plugin = {
       { priority: 100 },
     );
 
-    api.logger.info?.(`safeclaw: loaded policy_version=${config.policy_version}`);
+    api.logger.info?.(`safeclaw: loaded policy_version=${runtime.config.policy_version}`);
   }
 };
 

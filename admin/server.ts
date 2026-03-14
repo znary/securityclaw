@@ -31,6 +31,7 @@ type AdminServerOptions = {
   dbPath?: string;
   logger?: AdminLogger;
   reclaimPortOnStart?: boolean;
+  unrefOnStart?: boolean;
 };
 
 type AdminRuntime = {
@@ -192,8 +193,8 @@ function handleApi(
 
         sendJson(res, 200, {
           ok: true,
-          restart_required: true,
-          message: "策略已保存到本地 SQLite。若网关未启用热加载，请重启 openclaw-gateway。",
+          restart_required: false,
+          message: "策略已保存到本地 SQLite，并会在下一次安全决策时自动生效。",
           effective: {
             environment: validated.environment,
             policy_version: validated.policy_version,
@@ -334,6 +335,7 @@ export function startAdminServer(options: AdminServerOptions = {}): Promise<Admi
     }
   }
   const reclaimPortOnStart = options.reclaimPortOnStart ?? true;
+  const unrefOnStart = options.unrefOnStart ?? false;
 
   if (reclaimPortOnStart) {
     reclaimAdminPort(runtime.port, logger);
@@ -367,6 +369,9 @@ export function startAdminServer(options: AdminServerOptions = {}): Promise<Admi
 
     server.listen(runtime.port, "127.0.0.1", () => {
       resolved = true;
+      if (unrefOnStart) {
+        server.unref();
+      }
       logger.info?.(`SafeClaw admin listening on http://127.0.0.1:${runtime.port}`);
       logger.info?.(`Using config: ${runtime.configPath}`);
       logger.info?.(`Using strategy db: ${runtime.dbPath}`);

@@ -1,8 +1,10 @@
 # SafeClaw Admin Dashboard
 
 ## Start
-- Default behavior: once OpenClaw loads `safeclaw`, dashboard auto-starts at `http://127.0.0.1:4780`.
+- Default behavior: when `safeclaw` is loaded inside a persistent OpenClaw gateway service/runtime, dashboard auto-starts at `http://127.0.0.1:4780`.
+- Plugin load now automatically checks admin frontend assets and rebuilds `admin/public/app.js` when `admin/src` is newer or bundle is missing.
 - Optional manual mode: run `npm run admin` when you want standalone startup or local debugging.
+- Short-lived CLI commands such as `openclaw gateway restart` do not keep the dashboard process alive.
 - You can set `plugins.entries.safeclaw.config.adminAutoStart=false` to disable auto-start.
 
 ## Current UI Behavior

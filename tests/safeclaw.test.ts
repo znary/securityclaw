@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
+import { shouldAutoStartAdminServer } from "../src/admin/runtime_guard.ts";
 import { ConfigManager } from "../src/config/loader.ts";
 import { ApprovalFsm } from "../src/engine/approval_fsm.ts";
 import { DecisionEngine } from "../src/engine/decision_engine.ts";
@@ -321,4 +322,50 @@ test("rule matching supports resource scope and path prefix", async () => {
   assert.equal(result.decision, "block");
   assert.equal(result.decision_source, "rule");
   assert.deepEqual(result.reason_codes, ["WORKSPACE_OUTSIDE_BLOCK"]);
+});
+
+test("admin auto-start only enables for persistent gateway runtime", () => {
+  assert.deepEqual(
+    shouldAutoStartAdminServer({
+      OPENCLAW_SERVICE_MARKER: "openclaw",
+      OPENCLAW_SERVICE_KIND: "gateway"
+    }),
+    { enabled: true, reason: "gateway-service" },
+  );
+
+  assert.deepEqual(
+    shouldAutoStartAdminServer({
+      OPENCLAW_SERVICE_KIND: "gateway",
+      XPC_SERVICE_NAME: "ai.openclaw.gateway"
+    }),
+    { enabled: true, reason: "gateway-supervisor" },
+  );
+
+  assert.deepEqual(
+    shouldAutoStartAdminServer({
+      OPENCLAW_SERVICE_KIND: "gateway",
+      OPENCLAW_SERVICE_MARKER: "openclaw-cli"
+    }),
+    { enabled: true, reason: "gateway-service" },
+  );
+
+  assert.deepEqual(
+    shouldAutoStartAdminServer({
+      OPENCLAW_SERVICE_KIND: "gateway",
+      SAFECLAW_ADMIN_AUTOSTART_FORCE: "1"
+    }),
+    { enabled: true, reason: "forced" },
+  );
+
+  assert.deepEqual(
+    shouldAutoStartAdminServer({
+      OPENCLAW_SERVICE_KIND: "gateway-restart"
+    }),
+    { enabled: false, reason: "non-persistent-runtime" },
+  );
+
+  assert.deepEqual(
+    shouldAutoStartAdminServer({}),
+    { enabled: false, reason: "non-persistent-runtime" },
+  );
 });

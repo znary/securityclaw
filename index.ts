@@ -211,6 +211,17 @@ function matchedRuleIds(matches: RuleMatch[]): string {
   return matches.map((match) => match.rule.rule_id).join(",");
 }
 
+function normalizeToolName(rawToolName: string): string {
+  const tool = rawToolName.trim().toLowerCase();
+  if (tool === "exec" || tool === "shell" || tool === "shell_exec") {
+    return "shell.exec";
+  }
+  if (tool === "fs.list" || tool === "file.list") {
+    return "filesystem.list";
+  }
+  return rawToolName;
+}
+
 function formatToolBlockReason(
   toolName: string,
   scope: string,
@@ -301,7 +312,8 @@ const plugin = {
         event: PluginHookBeforeToolCallEvent,
         ctx: PluginHookToolContext,
       ): Promise<PluginHookBeforeToolCallResult | void> => {
-        const decisionContext = buildDecisionContext(config, ctx, event.toolName);
+        const normalizedToolName = normalizeToolName(event.toolName);
+        const decisionContext = buildDecisionContext(config, ctx, normalizedToolName);
         const matches = ruleEngine.match(decisionContext);
         const rules = matchedRuleIds(matches);
         const riskScore = riskScorer.score(decisionContext);
@@ -314,7 +326,8 @@ const plugin = {
           `trace_id=${traceId}`,
           `actor=${decisionContext.actor_id}`,
           `scope=${decisionContext.scope}`,
-          `tool=${event.toolName}`,
+          `tool=${normalizedToolName}`,
+          `raw_tool=${event.toolName}`,
           `risk=${riskScore}`,
           `decision=${outcome.decision}`,
           `rules=${rules}`,
@@ -339,7 +352,7 @@ const plugin = {
           trace_id: traceId,
           actor: decisionContext.actor_id,
           scope: decisionContext.scope,
-          tool: event.toolName,
+          tool: normalizedToolName,
           decision: outcome.decision,
           risk: outcome.risk_score,
           reasons: outcome.reason_codes,

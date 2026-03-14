@@ -55,4 +55,5 @@ Add this to `~/.openclaw/openclaw.json`:
 - Blocked/challenged tool calls return a user-facing `blockReason` with `trace_id`, reason codes, and next action text.
 - Default policy includes `prod + filesystem.list => challenge` (in OpenClaw it appears as blocked with approval hint), which covers top-level file enumeration attempts.
 - Decision observability is emitted to logger on every `before_tool_call` with `trace_id`, `tool`, `risk`, `decision`, matched `rules`, and truncated tool `args`. Tune truncation with plugin config `decisionLogMaxLength`.
+- Tool aliases are normalized in runtime (for example `exec` is treated as `shell.exec`) so shell execution policies can still take effect on hosts that use short tool names.
 - `tool_result_persist` and `before_message_write` are kept synchronous to match OpenClaw's runtime contract.

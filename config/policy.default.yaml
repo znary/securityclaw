@@ -36,6 +36,7 @@ risk:
     exfiltration: 25
   tools:
     shell.exec: 45
+    exec: 45
     filesystem.write: 25
     network.http: 20
   scopes:
@@ -57,6 +58,7 @@ policies:
         - "prod"
       tool:
         - "shell.exec"
+        - "exec"
   - rule_id: "contractor-network-challenge"
     enabled: true
     priority: 80

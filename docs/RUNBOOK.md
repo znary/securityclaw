@@ -1,5 +1,10 @@
 # SafeClaw Runbook
 
+## Verification Gate
+- Treat `npm test` as the required completion check for code changes.
+- `npm test` runs `npm run typecheck` before unit tests.
+- Do not mark work complete while `npm test` is failing.
+
 ## Config Operations
 - Edit the local YAML file and redeploy or call `plugin.config.reload()` from the host process.
 - If reload validation fails, the plugin keeps `last_known_good`.

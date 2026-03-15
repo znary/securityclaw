@@ -1,6 +1,6 @@
 # SafeClaw Task Progress
 
-Last updated: 2026-03-14
+Last updated: 2026-03-15
 
 ## Current Stage Progress
 
@@ -24,9 +24,12 @@ Last updated: 2026-03-14
 - Observability has been aligned:
   - `SecurityDecisionEvent` no longer includes `risk_score`
   - `before_tool_call` logs include `trace_id`, `tool`, `decision`, `rules`, `reasons`
+- Verification gate has been hardened:
+  - `npm test` is now the required completion check
+  - `npm test` runs `npm run typecheck` before unit tests
 
 ### Verification Notes
-- Plugin unit tests pass (`npm test`).
+- Required done-gate passes (`npm test`, which includes `npm run typecheck` and unit tests).
 - Admin bundle rebuild succeeds (`npm run admin:build`).
 - Dashboard writes action edits to SQLite (`runtime/safeclaw.db`) through `PUT /api/strategy`.
 

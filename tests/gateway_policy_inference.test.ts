@@ -2,11 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { copyFileSync, mkdtempSync, rmSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 
 import plugin from "../index.ts";
+import { StrategyStore } from "../src/config/strategy_store.ts";
 
 type HookHandler = (...args: unknown[]) => unknown;
 type BeforeToolCallHook = (
@@ -221,6 +222,8 @@ async function createBeforeToolCallHook() {
 
   return {
     beforeToolCall,
+    dbPath,
+    statusPath,
     cleanup() {
       rmSync(tempDir, { recursive: true, force: true });
     },
@@ -340,6 +343,84 @@ test("gateway maps shell file writes to filesystem.write rules", async () => {
     assert.deepEqual(blocked?.block, true);
     assert.match(String(blocked?.blockReason), /OUTSIDE_WRITE_BLOCK/);
   } finally {
+    harness.cleanup();
+  }
+});
+
+test("gateway allows configured account in default allow mode without changing rules", async () => {
+  const harness = await createBeforeToolCallHook();
+  let writer: StrategyStore | undefined;
+  try {
+    writer = new StrategyStore(harness.dbPath);
+    writer.writeOverride({
+      account_policies: [
+        {
+          subject: "telegram:chat-42",
+          mode: "default_allow",
+          is_admin: false,
+          admin_allow_all: false
+        }
+      ]
+    });
+    writer.close();
+    writer = undefined;
+
+    const blocked = await harness.beforeToolCall(
+      {
+        toolName: "filesystem.list",
+        params: { path: "Downloads" },
+      },
+      DEFAULT_GATEWAY_CTX,
+    );
+
+    assert.equal(blocked, undefined);
+    const snapshot = JSON.parse(readFileSync(harness.statusPath, "utf8")) as {
+      recent_decisions: Array<{ decision_source?: string; reasons?: string[] }>;
+    };
+    assert.equal(snapshot.recent_decisions[0]?.decision_source, "account");
+    assert.deepEqual(snapshot.recent_decisions[0]?.reasons, ["ACCOUNT_DEFAULT_ALLOW"]);
+  } finally {
+    writer?.close();
+    harness.cleanup();
+  }
+});
+
+test("gateway allows admin account when admin all rules allow is enabled", async () => {
+  const harness = await createBeforeToolCallHook();
+  let writer: StrategyStore | undefined;
+  try {
+    writer = new StrategyStore(harness.dbPath);
+    writer.writeOverride({
+      account_policies: [
+        {
+          subject: "telegram:chat-42",
+          mode: "apply_rules",
+          is_admin: true,
+          admin_allow_all: true
+        }
+      ]
+    });
+    writer.close();
+    writer = undefined;
+
+    const blocked = await harness.beforeToolCall(
+      {
+        toolName: "exec",
+        params: {
+          command: "echo secret > ~/Downloads/safeclaw-demo.txt",
+        },
+      },
+      DEFAULT_GATEWAY_CTX,
+    );
+
+    assert.equal(blocked, undefined);
+    const snapshot = JSON.parse(readFileSync(harness.statusPath, "utf8")) as {
+      recent_decisions: Array<{ decision_source?: string; reasons?: string[] }>;
+    };
+    assert.equal(snapshot.recent_decisions[0]?.decision_source, "account");
+    assert.deepEqual(snapshot.recent_decisions[0]?.reasons, ["ACCOUNT_ADMIN_ALLOW_ALL"]);
+  } finally {
+    writer?.close();
     harness.cleanup();
   }
 });

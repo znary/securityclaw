@@ -1,12 +1,15 @@
 import http from "node:http";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { listOpenClawChatSessions } from "../src/admin/openclaw_session_catalog.ts";
 import { ConfigManager } from "../src/config/loader.ts";
 import { applyRuntimeOverride, type RuntimeOverride } from "../src/config/runtime_override.ts";
 import { StrategyStore } from "../src/config/strategy_store.ts";
+import { AccountPolicyEngine } from "../src/domain/services/account_policy_engine.ts";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PUBLIC_DIR = path.resolve(ROOT, "admin/public");
@@ -16,6 +19,7 @@ const DEFAULT_STATUS_PATH = process.env.SAFECLAW_STATUS_PATH ?? path.resolve(ROO
 const DEFAULT_DB_PATH = process.env.SAFECLAW_DB_PATH ?? path.resolve(ROOT, "runtime/safeclaw.db");
 const DEFAULT_LEGACY_OVERRIDE_PATH =
   process.env.SAFECLAW_LEGACY_OVERRIDE_PATH ?? path.resolve(ROOT, "config/policy.overrides.json");
+const DEFAULT_OPENCLAW_HOME = process.env.OPENCLAW_HOME ?? path.join(os.homedir(), ".openclaw");
 
 type AdminLogger = {
   info?: (message: string) => void;
@@ -29,6 +33,7 @@ type AdminServerOptions = {
   legacyOverridePath?: string;
   statusPath?: string;
   dbPath?: string;
+  openClawHome?: string;
   logger?: AdminLogger;
   reclaimPortOnStart?: boolean;
   unrefOnStart?: boolean;
@@ -40,6 +45,7 @@ type AdminRuntime = {
   legacyOverridePath: string;
   statusPath: string;
   dbPath: string;
+  openClawHome: string;
 };
 
 type AdminServerStartResult = {
@@ -113,6 +119,10 @@ function summarizeTotals(status: JsonRecord): JsonRecord {
   return { total, allow, warn, challenge, block };
 }
 
+function readAccountPolicies(strategyStore: StrategyStore) {
+  return AccountPolicyEngine.sanitize(strategyStore.readOverride()?.account_policies);
+}
+
 function handleApi(
   req: http.IncomingMessage,
   res: http.ServerResponse,
@@ -168,6 +178,23 @@ function handleApi(
     return;
   }
 
+  if (req.method === "GET" && url.pathname === "/api/accounts") {
+    try {
+      const override = strategyStore.readOverride() ?? {};
+      sendJson(res, 200, {
+        paths: {
+          db_path: runtime.dbPath,
+          openclaw_home: runtime.openClawHome
+        },
+        account_policies: AccountPolicyEngine.sanitize(override.account_policies),
+        sessions: listOpenClawChatSessions(runtime.openClawHome)
+      });
+    } catch (error) {
+      sendJson(res, 500, { error: String(error) });
+    }
+    return;
+  }
+
   if (req.method === "PUT" && url.pathname === "/api/strategy") {
     void (async () => {
       try {
@@ -200,6 +227,34 @@ function handleApi(
             policy_version: validated.policy_version,
             policy_count: validated.policies.length
           }
+        });
+      } catch (error) {
+        sendJson(res, 400, { ok: false, error: String(error) });
+      }
+    })();
+    return;
+  }
+
+  if (req.method === "PUT" && url.pathname === "/api/accounts") {
+    void (async () => {
+      try {
+        const body = await readBody(req);
+        const current = strategyStore.readOverride() ?? {};
+        const nextOverride: RuntimeOverride = {
+          ...current,
+          updated_at: new Date().toISOString(),
+          account_policies: AccountPolicyEngine.sanitize(body.account_policies)
+        };
+
+        const base = ConfigManager.fromFile(runtime.configPath).getConfig();
+        applyRuntimeOverride(base, nextOverride);
+        strategyStore.writeOverride(nextOverride);
+
+        sendJson(res, 200, {
+          ok: true,
+          restart_required: false,
+          message: "账号策略已保存到本地 SQLite，并会在下一次安全决策时自动生效。",
+          account_policy_count: readAccountPolicies(strategyStore).length
         });
       } catch (error) {
         sendJson(res, 400, { ok: false, error: String(error) });
@@ -249,7 +304,8 @@ function resolveRuntime(options: AdminServerOptions): AdminRuntime {
     configPath: options.configPath ?? DEFAULT_CONFIG_PATH,
     legacyOverridePath: options.legacyOverridePath ?? DEFAULT_LEGACY_OVERRIDE_PATH,
     statusPath: options.statusPath ?? DEFAULT_STATUS_PATH,
-    dbPath: options.dbPath ?? DEFAULT_DB_PATH
+    dbPath: options.dbPath ?? DEFAULT_DB_PATH,
+    openClawHome: options.openClawHome ?? DEFAULT_OPENCLAW_HOME
   };
 }
 

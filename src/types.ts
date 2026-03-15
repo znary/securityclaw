@@ -6,7 +6,7 @@ export type HookName =
   | "message_sending";
 
 export type Decision = "allow" | "warn" | "challenge" | "block";
-export type DecisionSource = "rule" | "default" | "approval";
+export type DecisionSource = "rule" | "default" | "approval" | "account";
 export type FailMode = "open" | "close";
 export type ApprovalStatus = "pending" | "approved" | "rejected" | "expired";
 export type PersistMode = "strict" | "compat";
@@ -16,6 +16,7 @@ export type PatternType = "pii" | "secret" | "token" | "credential";
 export type ReasonCode = string;
 export type ResourceScope = "none" | "workspace_inside" | "workspace_outside" | "system";
 export type Severity = "low" | "medium" | "high" | "critical";
+export type AccountPolicyMode = "apply_rules" | "default_allow";
 export type ControlDomain =
   | "execution_control"
   | "data_access"
@@ -42,6 +43,20 @@ export interface SecurityContext {
   untrusted: boolean;
   tags: string[];
   created_at: string;
+}
+
+export interface AccountPolicyRecord {
+  subject: string;
+  mode: AccountPolicyMode;
+  is_admin: boolean;
+  admin_allow_all: boolean;
+  label?: string;
+  session_key?: string;
+  session_id?: string;
+  agent_id?: string;
+  channel?: string;
+  chat_type?: string;
+  updated_at?: string;
 }
 
 export interface HookControls {

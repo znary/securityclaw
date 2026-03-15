@@ -17,15 +17,25 @@ test("strategy store persists override in sqlite", () => {
 
     store.writeOverride({
       environment: "prod",
-      policy_version: "2026-03-14"
+      policy_version: "2026-03-14",
+      account_policies: [
+        {
+          subject: "telegram:chat-42",
+          mode: "default_allow",
+          is_admin: false,
+          admin_allow_all: false
+        }
+      ]
     });
     assert.equal(store.readOverride()?.environment, "prod");
     assert.equal(store.readOverride()?.policy_version, "2026-03-14");
+    assert.equal(store.readOverride()?.account_policies?.[0]?.subject, "telegram:chat-42");
 
     store.close();
     store = new StrategyStore(dbPath);
     assert.equal(store.readOverride()?.environment, "prod");
     assert.equal(store.readOverride()?.policy_version, "2026-03-14");
+    assert.equal(store.readOverride()?.account_policies?.[0]?.mode, "default_allow");
   } finally {
     store?.close();
     rmSync(tempDir, { recursive: true, force: true });

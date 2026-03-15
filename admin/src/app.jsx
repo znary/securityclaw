@@ -14,6 +14,8 @@ import {
   Line
 } from "recharts";
 
+import { canonicalizeAccountPolicies } from "../../src/domain/services/account_policy_engine.ts";
+
 const REFRESH_INTERVAL_MS = 15000;
 const DECISIONS_PER_PAGE = 12;
 const TAB_ITEMS = [
@@ -28,6 +30,10 @@ const TAB_ITEMS = [
   {
     id: "rules",
     label: "规则策略"
+  },
+  {
+    id: "accounts",
+    label: "账号策略"
   }
 ];
 
@@ -43,7 +49,13 @@ const CHART_COLORS = ["#1e4f94", "#2d66ab", "#3f7fc2", "#5f97d1", "#7badde", "#9
 const DECISION_SOURCE_TEXT = {
   rule: "规则命中",
   default: "默认放行",
-  approval: "审批放行"
+  approval: "审批放行",
+  account: "账号策略"
+};
+
+const ACCOUNT_MODE_TEXT = {
+  apply_rules: "应用规则",
+  default_allow: "默认放行"
 };
 
 const SCOPE_TEXT = {
@@ -235,6 +247,10 @@ function decisionSourceLabel(source) {
   return DECISION_SOURCE_TEXT[source] || "-";
 }
 
+function accountModeLabel(mode) {
+  return ACCOUNT_MODE_TEXT[mode] || mode || "-";
+}
+
 function scopeLabel(scope) {
   if (!scope) return "未知作用域";
   return SCOPE_TEXT[scope] || scope;
@@ -247,6 +263,19 @@ function resourceScopeLabel(scope) {
   if (scope === "system") return "系统目录";
   if (scope === "none") return "无路径";
   return scope;
+}
+
+function accountPrimaryLabel(account) {
+  if (!account) return "未命名账号";
+  return account.label || account.subject || "未命名账号";
+}
+
+function accountMetaLabel(account) {
+  const parts = [];
+  if (account?.channel) parts.push(account.channel);
+  if (account?.chat_type) parts.push(account.chat_type);
+  if (account?.agent_id) parts.push(`agent:${account.agent_id}`);
+  return parts.join(" · ") || "OpenClaw chat session";
 }
 
 function getJsonError(payload, fallback) {
@@ -270,6 +299,16 @@ function extractPolicies(strategyPayload) {
   return Array.isArray(list)
     ? clone(list).map((policy) => ({ ...policy, enabled: true }))
     : [];
+}
+
+function extractAccountPolicies(accountPayload) {
+  const list = accountPayload?.account_policies;
+  return canonicalizeAccountPolicies(Array.isArray(list) ? clone(list) : []);
+}
+
+function extractChatSessions(accountPayload) {
+  const list = accountPayload?.sessions;
+  return Array.isArray(list) ? clone(list) : [];
 }
 
 function formatList(values) {
@@ -686,6 +725,10 @@ function App() {
   const [statusPayload, setStatusPayload] = useState(null);
   const [policies, setPolicies] = useState([]);
   const [publishedPolicies, setPublishedPolicies] = useState([]);
+  const [accountPolicies, setAccountPolicies] = useState([]);
+  const [publishedAccountPolicies, setPublishedAccountPolicies] = useState([]);
+  const [availableSessions, setAvailableSessions] = useState([]);
+  const [selectedSessionSubject, setSelectedSessionSubject] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -697,10 +740,17 @@ function App() {
   const rulesColumnRef = useRef(null);
   const firstRuleRef = useRef(null);
 
-  const hasPendingChanges = useMemo(
+  const hasPendingRuleChanges = useMemo(
     () => JSON.stringify(policies) !== JSON.stringify(publishedPolicies),
     [policies, publishedPolicies]
   );
+  const hasPendingAccountChanges = useMemo(
+    () =>
+      JSON.stringify(canonicalizeAccountPolicies(accountPolicies)) !==
+      JSON.stringify(canonicalizeAccountPolicies(publishedAccountPolicies)),
+    [accountPolicies, publishedAccountPolicies]
+  );
+  const hasPendingChanges = hasPendingRuleChanges || hasPendingAccountChanges;
   const groupedPolicies = useMemo(() => {
     const groups = new Map();
     policies.forEach((policy, index) => {
@@ -715,23 +765,39 @@ function App() {
     () => policies.map((policy, index) => ({ key: policy?.rule_id || String(index), policy, index })),
     [policies]
   );
+  const availableSessionOptions = useMemo(
+    () => availableSessions.filter((session) => !accountPolicies.some((account) => account.subject === session.subject)),
+    [accountPolicies, availableSessions]
+  );
   const firstRuleKey = policyEntries[0]?.key || "";
 
-  const loadData = useCallback(async (syncRules = true, silent = false) => {
+  const loadData = useCallback(async (options = {}) => {
+    const {
+      syncRules = true,
+      syncAccounts = true,
+      silent = false
+    } = options;
     if (!silent) {
       setLoading(true);
     }
     setError("");
     try {
-      const [status, strategy] = await Promise.all([
+      const [status, strategy, accounts] = await Promise.all([
         getJson("/api/status"),
-        getJson("/api/strategy")
+        getJson("/api/strategy"),
+        getJson("/api/accounts")
       ]);
       setStatusPayload(status);
       const nextPolicies = extractPolicies(strategy);
+      const nextAccountPolicies = extractAccountPolicies(accounts);
       setPublishedPolicies(nextPolicies);
-      if (syncRules) {
+      setPublishedAccountPolicies(nextAccountPolicies);
+      setAvailableSessions(extractChatSessions(accounts));
+      if (syncRules === true) {
         setPolicies(clone(nextPolicies));
+      }
+      if (syncAccounts === true) {
+        setAccountPolicies(clone(nextAccountPolicies));
       }
     } catch (loadError) {
       setError(String(loadError));
@@ -741,7 +807,7 @@ function App() {
   }, []);
 
   useEffect(() => {
-    void loadData(true, false);
+    void loadData({ syncRules: true, syncAccounts: true, silent: false });
   }, [loadData]);
 
   useEffect(() => {
@@ -749,7 +815,7 @@ function App() {
       return undefined;
     }
     const timer = setInterval(() => {
-      void loadData(true, true);
+      void loadData({ syncRules: true, syncAccounts: true, silent: true });
     }, REFRESH_INTERVAL_MS);
     return () => clearInterval(timer);
   }, [hasPendingChanges, loadData, saving]);
@@ -879,7 +945,39 @@ function App() {
       const suffix = payload.restart_required ? " 需要重启 gateway 后完整生效。" : "";
       setMessage(`规则已自动保存。${payload.message || ""}${suffix}`.trim());
       setPublishedPolicies(clone(normalizedPolicies));
-      await loadData(false, true);
+      await loadData({ syncRules: false, syncAccounts: false, silent: true });
+    } catch (saveError) {
+      setError(String(saveError));
+      setMessage("");
+    } finally {
+      setSaving(false);
+    }
+  }, [loadData]);
+
+  const saveAccounts = useCallback(async (nextAccounts) => {
+    const normalizedAccounts = canonicalizeAccountPolicies(nextAccounts);
+    setSaving(true);
+    setError("");
+    setMessage("账号策略自动保存中...");
+    try {
+      const response = await fetch("/api/accounts", {
+        method: "PUT",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json"
+        },
+        body: JSON.stringify({
+          account_policies: normalizedAccounts
+        })
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(getJsonError(payload, "保存失败"));
+      }
+      const suffix = payload.restart_required ? " 需要重启 gateway 后完整生效。" : "";
+      setMessage(`账号策略已自动保存。${payload.message || ""}${suffix}`.trim());
+      setPublishedAccountPolicies(clone(normalizedAccounts));
+      await loadData({ syncRules: false, syncAccounts: false, silent: true });
     } catch (saveError) {
       setError(String(saveError));
       setMessage("");
@@ -889,7 +987,7 @@ function App() {
   }, [loadData]);
 
   useEffect(() => {
-    if (loading || saving || !hasPendingChanges) {
+    if (loading || saving || !hasPendingRuleChanges) {
       return undefined;
     }
     setMessage("检测到规则变更，正在自动保存...");
@@ -897,7 +995,18 @@ function App() {
       void savePolicies(policies);
     }, 500);
     return () => clearTimeout(timer);
-  }, [hasPendingChanges, loading, policies, savePolicies, saving]);
+  }, [hasPendingRuleChanges, loading, policies, savePolicies, saving]);
+
+  useEffect(() => {
+    if (loading || saving || !hasPendingAccountChanges) {
+      return undefined;
+    }
+    setMessage("检测到账号策略变更，正在自动保存...");
+    const timer = setTimeout(() => {
+      void saveAccounts(accountPolicies);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [accountPolicies, hasPendingAccountChanges, loading, saveAccounts, saving]);
 
   useEffect(() => {
     setDecisionPage((current) => Math.min(current, totalDecisionPages));
@@ -967,10 +1076,56 @@ function App() {
     event.stopPropagation();
   }
 
+  function addSelectedSessionAccount() {
+    if (!selectedSessionSubject) {
+      return;
+    }
+    const session = availableSessionOptions.find((item) => item.subject === selectedSessionSubject);
+    if (!session) {
+      return;
+    }
+    setAccountPolicies((current) => [
+      ...current,
+      {
+        subject: session.subject,
+        label: session.label,
+        mode: "apply_rules",
+        is_admin: false,
+        admin_allow_all: false,
+        session_key: session.session_key,
+        session_id: session.session_id,
+        agent_id: session.agent_id,
+        channel: session.channel,
+        chat_type: session.chat_type,
+        updated_at: new Date().toISOString()
+      }
+    ]);
+    setSelectedSessionSubject("");
+  }
+
+  function updateAccountPolicy(subject, patch) {
+    setAccountPolicies((current) =>
+      current.map((account) =>
+        account.subject === subject
+          ? {
+              ...account,
+              ...patch,
+              updated_at: new Date().toISOString()
+            }
+          : account
+      )
+    );
+  }
+
+  function removeAccountPolicy(subject) {
+    setAccountPolicies((current) => current.filter((account) => account.subject !== subject));
+  }
+
   const tabCounts = {
     overview: stats.total,
     events: decisions.length,
-    rules: policies.length
+    rules: policies.length,
+    accounts: accountPolicies.length
   };
   const postureTitle = stats.block > 0
     ? "防护规则正在主动拦截风险操作"
@@ -1096,7 +1251,7 @@ function App() {
 
               <DistributionChart
                 title="决策来源分布"
-                subtitle="rule / default / approval"
+                subtitle="rule / default / approval / account"
                 items={decisionSourceDistribution}
                 total={analyticsSamples.length}
                 emptyText="暂无决策来源数据"
@@ -1189,7 +1344,13 @@ function App() {
                   <button
                     className="ghost small"
                     type="button"
-                    onClick={() => void loadData(!hasPendingChanges && !saving, false)}
+                    onClick={() =>
+                      void loadData({
+                        syncRules: !hasPendingChanges && !saving,
+                        syncAccounts: !hasPendingChanges && !saving,
+                        silent: false
+                      })
+                    }
                   >
                     刷新
                   </button>
@@ -1403,6 +1564,127 @@ function App() {
                   </aside>
                 ) : null}
               </div>
+            </div>
+          </section>
+        ) : null}
+
+        {activeTab === "accounts" ? (
+          <section
+            id="panel-accounts"
+            className="tab-panel"
+            role="tabpanel"
+            aria-labelledby="tab-accounts"
+          >
+            <div className="panel-card accounts-panel">
+              <div className="card-head">
+                <div>
+                  <h2>账号策略</h2>
+                  <p className="accounts-intro">
+                    账号策略在规则引擎之后插入判断，不改动现有规则定义。可为指定 chat session 设置管理员直通，或改成默认放行。
+                  </p>
+                </div>
+                <div className="rule-meta">
+                  <span className="meta-pill">已配置 {accountPolicies.length}</span>
+                  <span className="meta-pill">可选会话 {availableSessions.length}</span>
+                </div>
+              </div>
+
+              <div className="account-toolbar">
+                <div className="account-picker">
+                  <select
+                    value={selectedSessionSubject}
+                    onChange={(event) => setSelectedSessionSubject(event.target.value)}
+                    disabled={availableSessionOptions.length === 0}
+                  >
+                    <option value="">从 OpenClaw chat session 选择账号</option>
+                    {availableSessionOptions.map((session) => (
+                      <option key={session.subject} value={session.subject}>
+                        {accountPrimaryLabel(session)}{session.channel ? ` · ${session.channel}` : ""}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    className="primary"
+                    type="button"
+                    disabled={!selectedSessionSubject}
+                    onClick={addSelectedSessionAccount}
+                  >
+                    添加账号
+                  </button>
+                </div>
+                <div className="chart-subtitle">账号命中时优先走账号策略，再决定是否进入审批挑战。</div>
+              </div>
+
+              {accountPolicies.length === 0 ? (
+                <div className="chart-empty">暂无账号策略。先从 OpenClaw 现有 chat session 里选择一个账号。</div>
+              ) : (
+                <div className="account-list">
+                  {accountPolicies.map((account) => (
+                    <article key={account.subject} className="account-card">
+                      <div className="account-card-head">
+                        <div>
+                          <div className="account-title-row">
+                            <h3>{accountPrimaryLabel(account)}</h3>
+                            {account.is_admin ? <span className="tag meta-tag">管理员</span> : null}
+                            <span className={`tag ${account.mode === "default_allow" ? "warn" : "allow"}`}>
+                              {accountModeLabel(account.mode)}
+                            </span>
+                            {account.is_admin && account.admin_allow_all ? <span className="tag allow">所有规则放行</span> : null}
+                          </div>
+                          <div className="account-subject">{account.subject}</div>
+                          <div className="account-meta">{accountMetaLabel(account)}</div>
+                        </div>
+                        <button
+                          className="ghost small"
+                          type="button"
+                          onClick={() => removeAccountPolicy(account.subject)}
+                        >
+                          删除
+                        </button>
+                      </div>
+
+                      <div className="account-controls">
+                        <label className="account-field">
+                          <span>规则模式</span>
+                          <select
+                            value={account.mode || "apply_rules"}
+                            onChange={(event) => updateAccountPolicy(account.subject, { mode: event.target.value })}
+                          >
+                            <option value="apply_rules">应用规则</option>
+                            <option value="default_allow">默认放行</option>
+                          </select>
+                        </label>
+
+                        <label className="account-toggle">
+                          <input
+                            type="checkbox"
+                            checked={account.is_admin === true}
+                            onChange={(event) =>
+                              updateAccountPolicy(account.subject, {
+                                is_admin: event.target.checked,
+                                ...(event.target.checked ? {} : { admin_allow_all: false })
+                              })
+                            }
+                          />
+                          <span>管理员账号</span>
+                        </label>
+
+                        <label className={`account-toggle ${account.is_admin === true ? "" : "disabled"}`}>
+                          <input
+                            type="checkbox"
+                            checked={account.is_admin === true && account.admin_allow_all === true}
+                            disabled={account.is_admin !== true}
+                            onChange={(event) =>
+                              updateAccountPolicy(account.subject, { admin_allow_all: event.target.checked })
+                            }
+                          />
+                          <span>管理员所有规则都放行</span>
+                        </label>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              )}
             </div>
           </section>
         ) : null}

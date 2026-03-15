@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 
-import type { DlpConfig, PolicyRule, SafeClawConfig } from "../types.ts";
+import type { AccountPolicyRecord, DlpConfig, PolicyRule, SafeClawConfig } from "../types.ts";
 import { validateConfig } from "./validator.ts";
 
 export type RuntimeOverride = {
@@ -9,6 +9,7 @@ export type RuntimeOverride = {
   policy_version?: string | undefined;
   defaults?: Partial<SafeClawConfig["defaults"]> | undefined;
   policies?: PolicyRule[] | undefined;
+  account_policies?: AccountPolicyRecord[] | undefined;
   dlp?: (Partial<Omit<DlpConfig, "patterns">> & { patterns?: DlpConfig["patterns"]; }) | undefined;
 };
 

@@ -36,7 +36,8 @@ body {
 }
 
 button,
-select {
+select,
+input {
   font: inherit;
 }
 
@@ -54,7 +55,8 @@ button:disabled {
 }
 
 button:focus-visible,
-select:focus-visible {
+select:focus-visible,
+input:focus-visible {
   outline: 3px solid rgba(15, 110, 169, 0.2);
   outline-offset: 2px;
 }
@@ -1120,6 +1122,135 @@ tbody tr:hover {
   color: var(--ink);
 }
 
+.accounts-panel {
+  display: grid;
+  gap: 18px;
+}
+
+.accounts-intro {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.65;
+  max-width: 880px;
+}
+
+.account-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.account-picker {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.account-picker select,
+.account-field select {
+  min-height: 40px;
+  min-width: min(420px, 80vw);
+  padding: 0 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink);
+}
+
+.account-list {
+  display: grid;
+  gap: 14px;
+}
+
+.account-card {
+  padding: 18px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--line);
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+  display: grid;
+  gap: 16px;
+}
+
+.account-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.account-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.account-title-row h3 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.account-subject {
+  margin-top: 8px;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.account-meta {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.account-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.account-field {
+  display: grid;
+  gap: 8px;
+}
+
+.account-field span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.account-toggle {
+  min-height: 40px;
+  padding: 0 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: #fff;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.account-toggle.disabled {
+  opacity: 0.58;
+}
+
+.account-toggle input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
 @keyframes rise-in {
   from {
     opacity: 0;
@@ -1167,7 +1298,8 @@ tbody tr:hover {
 
   .workspace-top,
   .card-head,
-  .rule-head {
+  .rule-head,
+  .account-card-head {
     flex-direction: column;
     align-items: stretch;
   }
@@ -1216,6 +1348,17 @@ tbody tr:hover {
 
   .pagination {
     align-items: stretch;
+  }
+
+  .account-picker,
+  .account-controls {
+    align-items: stretch;
+  }
+
+  .account-picker select,
+  .account-field select {
+    min-width: 0;
+    width: 100%;
   }
 
   th,

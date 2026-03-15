@@ -27,6 +27,8 @@ import { RuntimeStatusStore } from "./src/monitoring/status_store.ts";
 import { startAdminServer } from "./admin/server.ts";
 import { ensureAdminAssetsBuilt } from "./src/admin/build.ts";
 import { shouldAutoStartAdminServer } from "./src/admin/runtime_guard.ts";
+import { AccountPolicyEngine } from "./src/domain/services/account_policy_engine.ts";
+import { ApprovalSubjectResolver } from "./src/domain/services/approval_subject_resolver.ts";
 import { inferShellFilesystemSemantic } from "./src/domain/services/shell_filesystem_inference.ts";
 import type {
   DecisionContext,
@@ -64,6 +66,7 @@ type RuntimeDependencies = {
   config: SafeClawConfig;
   ruleEngine: RuleEngine;
   decisionEngine: DecisionEngine;
+  accountPolicyEngine: AccountPolicyEngine;
   dlpEngine: DlpEngine;
   emitter: EventEmitter;
   overrideLoaded: boolean;
@@ -689,28 +692,7 @@ function normalizeThreadId(threadId: string | number | undefined): number | unde
 }
 
 function resolveApprovalSubject(ctx: SafeClawHookContext): string {
-  const sessionKey = ctx.sessionKey?.trim();
-  if (sessionKey) {
-    const directOrSlash = sessionKey.match(/^agent:[^:]+:([^:]+):(direct|slash):(.+)$/);
-    if (directOrSlash) {
-      return `${directOrSlash[1]}:${directOrSlash[3]}`;
-    }
-    const compactDirectOrSlash = sessionKey.match(/^([^:]+):(direct|slash):(.+)$/);
-    if (compactDirectOrSlash) {
-      return `${compactDirectOrSlash[1]}:${compactDirectOrSlash[3]}`;
-    }
-    return sessionKey;
-  }
-  if (ctx.channelId?.trim() && ctx.sessionId?.trim()) {
-    return `${ctx.channelId.trim()}:${ctx.sessionId.trim()}`;
-  }
-  if (ctx.sessionId?.trim()) {
-    return `session:${ctx.sessionId.trim()}`;
-  }
-  const actor = ctx.agentId?.trim() || "unknown-agent";
-  const channel = ctx.channelId?.trim() || "default-channel";
-  const workspace = ctx.workspaceDir ? path.normalize(ctx.workspaceDir) : "unknown-workspace";
-  return `fallback:${actor}:${channel}:${workspace}`;
+  return ApprovalSubjectResolver.resolve(ctx);
 }
 
 function sanitizeApprovalConfig(config: ChatApprovalConfig | undefined): Required<ChatApprovalConfig> {
@@ -1250,6 +1232,7 @@ function buildRuntime(snapshot: LiveConfigSnapshot): RuntimeDependencies {
     config: snapshot.config,
     ruleEngine: new RuleEngine(snapshot.config.policies),
     decisionEngine: new DecisionEngine(snapshot.config),
+    accountPolicyEngine: new AccountPolicyEngine(snapshot.override?.account_policies),
     dlpEngine: new DlpEngine(snapshot.config.dlp),
     emitter: createEventEmitter(snapshot.config),
     overrideLoaded: snapshot.overrideLoaded
@@ -1692,6 +1675,9 @@ const plugin = {
         const traceId = decisionContext.security_context.trace_id;
         const ruleIds = matches.map((match) => match.rule.rule_id);
         const effectiveToolName = decisionContext.tool_name ?? normalizedToolName ?? "unknown-tool";
+        const approvalSubject = resolveApprovalSubject(hookContext);
+        const accountPolicy = current.accountPolicyEngine.getPolicy(approvalSubject);
+        const accountOverride = current.accountPolicyEngine.evaluate(approvalSubject);
         const approvalRequestKey = createApprovalRequestKey({
           policy_version: current.config.policy_version,
           scope: decisionContext.scope,
@@ -1705,13 +1691,12 @@ const plugin = {
             rule_ids: ruleIds,
           },
         });
-        let effectiveDecision = outcome.decision;
-        let effectiveDecisionSource = outcome.decision_source;
-        let effectiveReasonCodes = [...outcome.reason_codes];
+        let effectiveDecision = accountOverride?.decision ?? outcome.decision;
+        let effectiveDecisionSource = accountOverride?.decision_source ?? outcome.decision_source;
+        let effectiveReasonCodes = [...(accountOverride?.reason_codes ?? outcome.reason_codes)];
         let approvalBlockReason: string | undefined;
 
-        if (outcome.decision === "challenge" && approvalBridge.enabled) {
-          const approvalSubject = resolveApprovalSubject(hookContext);
+        if (effectiveDecision === "challenge" && approvalBridge.enabled) {
           const approvalScope = decisionContext.scope;
           const approved = approvalStore.findApproved(approvalSubject, approvalRequestKey);
           if (approved) {
@@ -1772,13 +1757,16 @@ const plugin = {
         const decisionLog = [
           "safeclaw: before_tool_call",
           `trace_id=${traceId}`,
-          `actor=${decisionContext.actor_id}`,
+          `actor=${approvalSubject}`,
           `scope=${decisionContext.scope}`,
           `resource_scope=${decisionContext.resource_scope}`,
           `tool=${effectiveToolName}`,
           `raw_tool=${event.toolName}`,
           `decision=${effectiveDecision}`,
           `source=${effectiveDecisionSource}`,
+          `account_mode=${accountPolicy?.mode ?? "apply_rules"}`,
+          `is_admin=${accountPolicy?.is_admin === true}`,
+          `admin_allow_all=${accountPolicy?.admin_allow_all === true}`,
           `rules=${rules}`,
           `reasons=${effectiveReasonCodes.join(",")}`,
           `args=${argsSummary}`
@@ -1806,7 +1794,7 @@ const plugin = {
           ts: new Date().toISOString(),
           hook: "before_tool_call",
           trace_id: traceId,
-          actor: decisionContext.actor_id,
+          actor: approvalSubject,
           scope: decisionContext.scope,
           tool: effectiveToolName,
           decision: effectiveDecision,

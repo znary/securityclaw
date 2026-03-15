@@ -32,7 +32,22 @@ Add this to `~/.openclaw/openclaw.json`:
           "dbPath": "./runtime/safeclaw.db",
           "statusPath": "./runtime/safeclaw-status.json",
           "adminAutoStart": true,
-          "adminPort": 4780
+          "adminPort": 4780,
+          "approvalBridge": {
+            "enabled": true,
+            "targets": [
+              {
+                "channel": "telegram",
+                "to": "123456789"
+              }
+            ],
+            "approvers": [
+              {
+                "channel": "telegram",
+                "from": "123456789"
+              }
+            ]
+          }
         }
       }
     }
@@ -58,7 +73,9 @@ Add this to `~/.openclaw/openclaw.json`:
 - Short-lived CLI commands that happen to load plugins (for example `openclaw gateway restart`) will skip dashboard auto-start; use `npm run admin` if you want a standalone local dashboard during debugging.
 - If you want webhook audit delivery, set `plugins.entries.safeclaw.config.webhookUrl`.
 - `before_tool_call` uses a pure rule-first model: matched rules decide `allow/warn/challenge/block`, otherwise default allow.
-- `before_tool_call` maps `challenge` to a blocked call with an approval-required reason because OpenClaw does not expose a native pause-and-resume approval hook in this path.
+- When `plugins.entries.safeclaw.config.approvalBridge.enabled=true`, `challenge` requests are written to SQLite, forwarded to configured admin chats, and can be approved with `/safeclaw-approve <approval_id>` (temporary) or `/safeclaw-approve <approval_id> long` (long-lived), or rejected with `/safeclaw-reject <approval_id>`.
+- Approved requests become subject-level authorizations within the same `scope` until the authorization expires; users can retry after approval and subsequent challenged actions in that scope are also allowed while the authorization is active.
+- Without `approvalBridge`, `challenge` still maps to a blocked call with an approval-required reason because OpenClaw does not expose a native pause-and-resume approval hook in this path.
 - Blocked/challenged tool calls return a user-facing `blockReason` with `trace_id`, reason codes, and next action text.
 - Decision observability is emitted to logger on every `before_tool_call` with `trace_id`, `tool`, `decision`, matched `rules`, and truncated tool `args`. Tune truncation with plugin config `decisionLogMaxLength`.
 - Tool aliases are normalized in runtime (for example `exec` is treated as `shell.exec`) so shell execution policies can still take effect on hosts that use short tool names.

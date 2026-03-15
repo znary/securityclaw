@@ -1,5 +1,6 @@
 import os from "node:os";
 import path from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
 import type {
@@ -7,6 +8,15 @@ import type {
 } from "openclaw/plugin-sdk";
 
 import { LiveConfigResolver, type LiveConfigSnapshot } from "./src/config/live_config.ts";
+import {
+  ChatApprovalStore,
+  type ApprovalChannel,
+  type ChatApprovalApprover,
+  type ChatApprovalConfig,
+  type ChatApprovalTarget,
+  type StoredApprovalNotification,
+  type StoredApprovalRecord,
+} from "./src/approvals/chat_approval_store.ts";
 import { DecisionEngine } from "./src/engine/decision_engine.ts";
 import { DlpEngine } from "./src/engine/dlp_engine.ts";
 import { RuleEngine } from "./src/engine/rule_engine.ts";
@@ -38,6 +48,7 @@ type SafeClawPluginConfig = {
   statusPath?: string;
   adminAutoStart?: boolean;
   adminPort?: number;
+  approvalBridge?: ChatApprovalConfig;
 };
 
 type ResolvedPluginRuntime = {
@@ -64,8 +75,33 @@ type SafeClawHookContext = {
   channelId?: string;
 };
 
+type SafeClawApprovalCommandContext = {
+  channel?: string;
+  senderId?: string;
+  from?: string;
+  to?: string;
+  accountId?: string;
+  args?: string;
+  isAuthorizedSender: boolean;
+};
+
+type ApprovalNotificationResult = {
+  sent: boolean;
+  notifications: StoredApprovalNotification[];
+};
+
+type ApprovalGrantMode = "temporary" | "longterm";
+
 const PLUGIN_ROOT = path.dirname(fileURLToPath(import.meta.url));
 const HOME_DIR = os.homedir();
+const APPROVAL_APPROVE_COMMAND = "safeclaw-approve";
+const APPROVAL_REJECT_COMMAND = "safeclaw-reject";
+const APPROVAL_PENDING_COMMAND = "safeclaw-pending";
+const APPROVAL_LONG_GRANT_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const APPROVAL_NOTIFICATION_MAX_ATTEMPTS = 3;
+const APPROVAL_NOTIFICATION_RETRY_DELAYS_MS = [250, 750];
+const APPROVAL_NOTIFICATION_RESEND_COOLDOWN_MS = 60_000;
+const APPROVAL_NOTIFICATION_HISTORY_LIMIT = 12;
 const PATH_KEY_PATTERN = /(path|paths|file|files|dir|cwd|target|output|input|source|destination|dest|root)/i;
 const SYSTEM_PATH_PREFIXES = ["/etc", "/usr", "/bin", "/sbin", "/var", "/private/etc", "/System", "/Library"];
 
@@ -194,6 +230,492 @@ function extractResourceContext(args: unknown, workspaceDir?: string): { resourc
     return { resourceScope: "workspace_inside", resourcePaths: resolved };
   }
   return { resourceScope: "none", resourcePaths: resolved };
+}
+
+function trimText(value: string, maxLength: number): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+  return `${value.slice(0, Math.max(0, maxLength - 3))}...`;
+}
+
+function normalizeApprovalChannel(value: string | undefined): ApprovalChannel | undefined {
+  switch ((value ?? "").trim().toLowerCase()) {
+    case "discord":
+    case "imessage":
+    case "line":
+    case "signal":
+    case "slack":
+    case "telegram":
+    case "whatsapp":
+      return value!.trim().toLowerCase() as ApprovalChannel;
+    default:
+      return undefined;
+  }
+}
+
+function normalizeThreadId(threadId: string | number | undefined): number | undefined {
+  if (typeof threadId === "number" && Number.isInteger(threadId)) {
+    return threadId;
+  }
+  if (typeof threadId === "string" && /^\d+$/.test(threadId.trim())) {
+    return Number(threadId.trim());
+  }
+  return undefined;
+}
+
+function resolveApprovalSubject(ctx: SafeClawHookContext): string {
+  const sessionKey = ctx.sessionKey?.trim();
+  if (sessionKey) {
+    const directOrSlash = sessionKey.match(/^agent:[^:]+:([^:]+):(direct|slash):(.+)$/);
+    if (directOrSlash) {
+      return `${directOrSlash[1]}:${directOrSlash[3]}`;
+    }
+    const compactDirectOrSlash = sessionKey.match(/^([^:]+):(direct|slash):(.+)$/);
+    if (compactDirectOrSlash) {
+      return `${compactDirectOrSlash[1]}:${compactDirectOrSlash[3]}`;
+    }
+    return sessionKey;
+  }
+  if (ctx.channelId?.trim() && ctx.sessionId?.trim()) {
+    return `${ctx.channelId.trim()}:${ctx.sessionId.trim()}`;
+  }
+  if (ctx.sessionId?.trim()) {
+    return `session:${ctx.sessionId.trim()}`;
+  }
+  const actor = ctx.agentId?.trim() || "unknown-agent";
+  const channel = ctx.channelId?.trim() || "default-channel";
+  const workspace = ctx.workspaceDir ? path.normalize(ctx.workspaceDir) : "unknown-workspace";
+  return `fallback:${actor}:${channel}:${workspace}`;
+}
+
+function sanitizeApprovalConfig(config: ChatApprovalConfig | undefined): Required<ChatApprovalConfig> {
+  const targets = Array.isArray(config?.targets)
+    ? config.targets
+        .map((target) => {
+          const channel = normalizeApprovalChannel(target.channel);
+          const to = typeof target.to === "string" ? target.to.trim() : "";
+          if (!channel || !to) {
+            return undefined;
+          }
+          return {
+            channel,
+            to,
+            ...(typeof target.account_id === "string" && target.account_id.trim()
+              ? { account_id: target.account_id.trim() }
+              : {}),
+            ...(typeof target.thread_id === "string" || typeof target.thread_id === "number"
+              ? { thread_id: target.thread_id }
+              : {}),
+          } satisfies ChatApprovalTarget;
+        })
+        .filter((target): target is ChatApprovalTarget => Boolean(target))
+    : [];
+  const approvers = Array.isArray(config?.approvers)
+    ? config.approvers
+        .map((approver) => {
+          const channel = normalizeApprovalChannel(approver.channel);
+          const from = typeof approver.from === "string" ? approver.from.trim() : "";
+          if (!channel || !from) {
+            return undefined;
+          }
+          return {
+            channel,
+            from,
+            ...(typeof approver.account_id === "string" && approver.account_id.trim()
+              ? { account_id: approver.account_id.trim() }
+              : {}),
+          } satisfies ChatApprovalApprover;
+        })
+        .filter((approver): approver is ChatApprovalApprover => Boolean(approver))
+    : [];
+
+  return {
+    enabled: config?.enabled === true,
+    targets,
+    approvers,
+  };
+}
+
+function matchesApprover(approvers: ChatApprovalApprover[], ctx: SafeClawApprovalCommandContext): boolean {
+  const channel = normalizeApprovalChannel(ctx.channel);
+  if (!channel) {
+    return false;
+  }
+  const senderIds = new Set<string>();
+  const collectSenderId = (value: string | undefined) => {
+    const trimmed = value?.trim();
+    if (!trimmed) {
+      return;
+    }
+    senderIds.add(trimmed);
+    const lower = trimmed.toLowerCase();
+    const channelPrefix = `${channel}:`;
+    if (lower.startsWith(channelPrefix)) {
+      const unscoped = trimmed.slice(channelPrefix.length).trim();
+      if (unscoped) {
+        senderIds.add(unscoped);
+      }
+      return;
+    }
+    senderIds.add(`${channel}:${trimmed}`);
+  };
+
+  collectSenderId(ctx.from);
+  collectSenderId(ctx.senderId);
+  if (senderIds.size === 0) {
+    return false;
+  }
+
+  return approvers.some((approver) => {
+    if (approver.channel !== channel || !senderIds.has(approver.from)) {
+      return false;
+    }
+    if (approver.account_id && approver.account_id !== ctx.accountId) {
+      return false;
+    }
+    return true;
+  });
+}
+
+function formatResourceScopeLabel(scope: ResourceScope): string {
+  if (scope === "workspace_inside") {
+    return "工作区内";
+  }
+  if (scope === "workspace_outside") {
+    return "工作区外";
+  }
+  if (scope === "system") {
+    return "系统目录";
+  }
+  return "无路径";
+}
+
+function formatApprovalPrompt(record: StoredApprovalRecord): string {
+  const paths = record.resource_paths.length > 0
+    ? trimText(record.resource_paths.slice(0, 3).join(" | "), 180)
+    : "未提供";
+  const rules = record.rule_ids.length > 0 ? record.rule_ids.join(", ") : "未命中具体规则";
+  const reasons = record.reason_codes.length > 0 ? record.reason_codes.join(", ") : "无附加原因";
+  const summary = record.args_summary ? trimText(record.args_summary, 220) : "无参数摘要";
+
+  return [
+    "SafeClaw 授权请求",
+    `ID: ${record.approval_id}`,
+    `授权对象: ${record.actor_id}`,
+    `授权范围: ${record.scope}`,
+    `最近触发工具: ${record.tool_name}`,
+    `资源范围: ${formatResourceScopeLabel(record.resource_scope)}`,
+    `路径: ${paths}`,
+    `规则: ${rules}`,
+    `原因: ${reasons}`,
+    `参数摘要: ${summary}`,
+    `临时授权: /${APPROVAL_APPROVE_COMMAND} ${record.approval_id}`,
+    `长期授权: /${APPROVAL_APPROVE_COMMAND} ${record.approval_id} long`,
+    `拒绝: /${APPROVAL_REJECT_COMMAND} ${record.approval_id}`,
+  ].join("\n");
+}
+
+function formatPendingApprovals(records: StoredApprovalRecord[]): string {
+  if (records.length === 0) {
+    return "当前没有待审批请求。";
+  }
+  return [
+    `待审批请求 ${records.length} 条:`,
+    ...records.map((record) =>
+      `- ${record.approval_id} | ${record.actor_id} | ${record.scope} | ${record.tool_name} | ${record.requested_at}`,
+    ),
+  ].join("\n");
+}
+
+function parseTimestampMs(value: string | undefined): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function shouldResendPendingApproval(record: StoredApprovalRecord, nowMs = Date.now()): boolean {
+  if (record.notifications.length === 0) {
+    return true;
+  }
+  const latestSentAt = record.notifications
+    .map((notification) => parseTimestampMs(notification.sent_at))
+    .reduce<number | undefined>((latest, current) => {
+      if (current === undefined) {
+        return latest;
+      }
+      if (latest === undefined || current > latest) {
+        return current;
+      }
+      return latest;
+    }, undefined);
+  const baseline = latestSentAt ?? parseTimestampMs(record.requested_at);
+  if (baseline === undefined) {
+    return true;
+  }
+  return nowMs - baseline >= APPROVAL_NOTIFICATION_RESEND_COOLDOWN_MS;
+}
+
+function mergeApprovalNotifications(
+  existing: StoredApprovalNotification[],
+  incoming: StoredApprovalNotification[],
+): StoredApprovalNotification[] {
+  if (incoming.length === 0) {
+    return existing;
+  }
+  return [...existing, ...incoming].slice(-APPROVAL_NOTIFICATION_HISTORY_LIMIT);
+}
+
+function nowIsoString(): string {
+  return new Date(Date.now()).toISOString();
+}
+
+function parseApprovalGrantMode(args: string | undefined): ApprovalGrantMode {
+  const value = args?.trim();
+  const mode = value ? value.split(/\s+/)[1]?.toLowerCase() : undefined;
+  if (mode === "long" || mode === "longterm" || mode === "permanent" || mode === "长期") {
+    return "longterm";
+  }
+  return "temporary";
+}
+
+function formatGrantModeLabel(mode: ApprovalGrantMode): string {
+  return mode === "longterm" ? "长期授权" : "临时授权";
+}
+
+function resolveApprovalGrantExpiry(record: StoredApprovalRecord, mode: ApprovalGrantMode): string {
+  if (mode === "longterm") {
+    return new Date(Date.now() + APPROVAL_LONG_GRANT_TTL_MS).toISOString();
+  }
+  const requestedAt = parseTimestampMs(record.requested_at) ?? Date.now();
+  const expiresAt = parseTimestampMs(record.expires_at) ?? (requestedAt + (15 * 60 * 1000));
+  const durationMs = Math.max(60_000, expiresAt - requestedAt);
+  return new Date(Date.now() + durationMs).toISOString();
+}
+
+async function sendApprovalNotification(
+  api: OpenClawPluginApi,
+  target: ChatApprovalTarget,
+  message: string,
+  approvalId: string,
+): Promise<StoredApprovalNotification> {
+  const notification: StoredApprovalNotification = {
+    channel: target.channel,
+    to: target.to,
+    ...(target.account_id ? { account_id: target.account_id } : {}),
+    ...(target.thread_id !== undefined ? { thread_id: target.thread_id } : {}),
+  };
+
+  if (target.channel === "telegram") {
+    const sendTelegram = api.runtime.channel.telegram.sendMessageTelegram as (
+      to: string,
+      text: string,
+      opts?: Record<string, unknown>,
+    ) => Promise<{ messageId?: string }>;
+
+    const result = await sendTelegram(target.to, message, {
+      cfg: api.config,
+      ...(target.account_id ? { accountId: target.account_id } : {}),
+      ...(normalizeThreadId(target.thread_id) !== undefined ? { messageThreadId: normalizeThreadId(target.thread_id) } : {}),
+      buttons: [
+        [
+          {
+            text: "临时批准",
+            callback_data: `/${APPROVAL_APPROVE_COMMAND} ${approvalId}`,
+            style: "success",
+          },
+          {
+            text: "长期授权",
+            callback_data: `/${APPROVAL_APPROVE_COMMAND} ${approvalId} long`,
+            style: "primary",
+          },
+        ],
+        [
+          {
+            text: "拒绝",
+            callback_data: `/${APPROVAL_REJECT_COMMAND} ${approvalId}`,
+            style: "danger",
+          },
+        ],
+      ],
+    });
+    if (result?.messageId) {
+      notification.message_id = result.messageId;
+    }
+    notification.sent_at = nowIsoString();
+    return notification;
+  }
+
+  if (target.channel === "discord") {
+    const sendDiscord = api.runtime.channel.discord.sendMessageDiscord as (
+      to: string,
+      text: string,
+      opts?: Record<string, unknown>,
+    ) => Promise<{ messageId?: string }>;
+    const result = await sendDiscord(target.to, message, {
+      cfg: api.config,
+      ...(target.account_id ? { accountId: target.account_id } : {}),
+    });
+    if (result?.messageId) {
+      notification.message_id = result.messageId;
+    }
+    notification.sent_at = nowIsoString();
+    return notification;
+  }
+
+  if (target.channel === "slack") {
+    const sendSlack = api.runtime.channel.slack.sendMessageSlack as (
+      to: string,
+      text: string,
+      opts?: Record<string, unknown>,
+    ) => Promise<{ messageId?: string }>;
+    const result = await sendSlack(target.to, message, {
+      cfg: api.config,
+      ...(target.account_id ? { accountId: target.account_id } : {}),
+    });
+    if (result?.messageId) {
+      notification.message_id = result.messageId;
+    }
+    notification.sent_at = nowIsoString();
+    return notification;
+  }
+
+  if (target.channel === "signal") {
+    const sendSignal = api.runtime.channel.signal.sendMessageSignal as (
+      to: string,
+      text: string,
+      opts?: Record<string, unknown>,
+    ) => Promise<{ messageId?: string }>;
+    const result = await sendSignal(target.to, message, {
+      cfg: api.config,
+      ...(target.account_id ? { accountId: target.account_id } : {}),
+    });
+    if (result?.messageId) {
+      notification.message_id = result.messageId;
+    }
+    notification.sent_at = nowIsoString();
+    return notification;
+  }
+
+  if (target.channel === "imessage") {
+    const sendIMessage = api.runtime.channel.imessage.sendMessageIMessage as (
+      to: string,
+      text: string,
+      opts?: Record<string, unknown>,
+    ) => Promise<{ messageId?: string }>;
+    const result = await sendIMessage(target.to, message, {
+      cfg: api.config,
+      ...(target.account_id ? { accountId: target.account_id } : {}),
+    });
+    if (result?.messageId) {
+      notification.message_id = result.messageId;
+    }
+    notification.sent_at = nowIsoString();
+    return notification;
+  }
+
+  if (target.channel === "whatsapp") {
+    const sendWhatsApp = api.runtime.channel.whatsapp.sendMessageWhatsApp as unknown as (
+      to: string,
+      text: string,
+      opts?: Record<string, unknown>,
+    ) => Promise<{ messageId?: string }>;
+    const result = await sendWhatsApp(target.to, message, {
+      cfg: api.config,
+    });
+    if (result?.messageId) {
+      notification.message_id = result.messageId;
+    }
+    notification.sent_at = nowIsoString();
+    return notification;
+  }
+
+  const pushLine = api.runtime.channel.line.pushMessageLine as (
+    to: string,
+    text: string,
+    opts?: Record<string, unknown>,
+  ) => Promise<{ messageId?: string }>;
+  const result = await pushLine(target.to, message, {
+    cfg: api.config,
+    ...(target.account_id ? { accountId: target.account_id } : {}),
+  });
+  if (result?.messageId) {
+    notification.message_id = result.messageId;
+  }
+  notification.sent_at = nowIsoString();
+  return notification;
+}
+
+async function notifyApprovalTargets(
+  api: OpenClawPluginApi,
+  targets: ChatApprovalTarget[],
+  record: StoredApprovalRecord,
+): Promise<ApprovalNotificationResult> {
+  if (targets.length === 0) {
+    return {
+      sent: false,
+      notifications: [],
+    };
+  }
+
+  const notifications: StoredApprovalNotification[] = [];
+  let sent = false;
+  const prompt = formatApprovalPrompt(record);
+  for (const target of targets) {
+    let delivered = false;
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= APPROVAL_NOTIFICATION_MAX_ATTEMPTS; attempt += 1) {
+      try {
+        const notification = await sendApprovalNotification(api, target, prompt, record.approval_id);
+        notifications.push(notification);
+        sent = true;
+        delivered = true;
+        api.logger.info?.(
+          `safeclaw: sent approval prompt approval_id=${record.approval_id} channel=${target.channel} to=${target.to} attempt=${attempt}${notification.message_id ? ` message_id=${notification.message_id}` : ""}`,
+        );
+        break;
+      } catch (error) {
+        lastError = error;
+        if (attempt < APPROVAL_NOTIFICATION_MAX_ATTEMPTS) {
+          api.logger.warn?.(
+            `safeclaw: retrying approval prompt approval_id=${record.approval_id} channel=${target.channel} to=${target.to} attempt=${attempt} (${String(error)})`,
+          );
+          await sleep(APPROVAL_NOTIFICATION_RETRY_DELAYS_MS[attempt - 1] ?? APPROVAL_NOTIFICATION_RETRY_DELAYS_MS.at(-1) ?? 250);
+        }
+      }
+    }
+    if (!delivered) {
+      api.logger.warn?.(
+        `safeclaw: failed to send approval prompt approval_id=${record.approval_id} channel=${target.channel} to=${target.to} (${String(lastError)})`,
+      );
+    }
+  }
+
+  return { sent, notifications };
+}
+
+function formatApprovalBlockReason(params: {
+  toolName: string;
+  scope: string;
+  traceId: string;
+  resourceScope: ResourceScope;
+  reasonCodes: string[];
+  rules: string;
+  approvalId: string;
+  notificationSent: boolean;
+}): string {
+  const reasons = params.reasonCodes.join(", ");
+  const notifyHint = params.notificationSent
+    ? "已向管理员发送授权请求。管理员批准后，该用户在当前范围内会自动放行直到授权过期。"
+    : "未配置或未成功发送授权通知，请由管理员使用 SafeClaw 审批命令处理。";
+  return `SafeClaw 已拦截敏感调用: ${params.toolName} (scope=${params.scope}, resource_scope=${params.resourceScope})。原因: ${reasons}。rules=${params.rules}。approval_id=${params.approvalId}。${notifyHint} trace_id=${params.traceId}`;
+}
+
+function parseApprovalId(args: string | undefined): string | undefined {
+  const value = args?.trim();
+  return value ? value.split(/\s+/)[0] : undefined;
 }
 
 function resolvePluginRuntime(api: OpenClawPluginApi): ResolvedPluginRuntime {
@@ -486,6 +1008,129 @@ const plugin = {
       api.logger.info?.("safeclaw: event sink disabled (webhook_url is empty), using logger-only observability");
     }
 
+    const approvalBridge = sanitizeApprovalConfig(pluginConfig.approvalBridge);
+    const approvalStore = new ChatApprovalStore(dbPath);
+    if (approvalBridge.enabled) {
+      api.logger.info?.(
+        `safeclaw: approval bridge enabled targets=${approvalBridge.targets.length} approvers=${approvalBridge.approvers.length}`,
+      );
+      if (approvalBridge.approvers.length === 0) {
+        api.logger.warn?.("safeclaw: approval bridge is enabled but no approvers are configured");
+      }
+    }
+
+    api.registerCommand({
+      name: APPROVAL_APPROVE_COMMAND,
+      description: "Approve a pending SafeClaw request in the current admin chat.",
+      acceptsArgs: true,
+      requireAuth: false,
+      handler: async (ctx) => {
+        const commandContext: SafeClawApprovalCommandContext = {
+          channel: ctx.channel,
+          ...(ctx.senderId !== undefined ? { senderId: ctx.senderId } : {}),
+          ...(ctx.from !== undefined ? { from: ctx.from } : {}),
+          ...(ctx.to !== undefined ? { to: ctx.to } : {}),
+          ...(ctx.accountId !== undefined ? { accountId: ctx.accountId } : {}),
+          ...(ctx.args !== undefined ? { args: ctx.args } : {}),
+          isAuthorizedSender: ctx.isAuthorizedSender,
+        };
+        if (!approvalBridge.enabled) {
+          return { text: "SafeClaw 审批桥接未启用。" };
+        }
+        if (!commandContext.isAuthorizedSender || !matchesApprover(approvalBridge.approvers, commandContext)) {
+          return { text: "你无权审批 SafeClaw 请求。" };
+        }
+        const approvalId = parseApprovalId(commandContext.args);
+        if (!approvalId) {
+          return { text: `用法: /${APPROVAL_APPROVE_COMMAND} <approval_id> [long]` };
+        }
+        const existing = approvalStore.getById(approvalId);
+        if (!existing) {
+          return { text: `审批请求不存在: ${approvalId}` };
+        }
+        if (existing.status !== "pending") {
+          return { text: `审批请求当前状态为 ${existing.status}，无法重复批准。` };
+        }
+        const grantMode = parseApprovalGrantMode(commandContext.args);
+        const grantExpiresAt = resolveApprovalGrantExpiry(existing, grantMode);
+        approvalStore.resolve(
+          approvalId,
+          `${commandContext.channel ?? "unknown"}:${commandContext.from ?? "unknown"}`,
+          "approved",
+          { expires_at: grantExpiresAt },
+        );
+        return {
+          text: `已为 ${existing.actor_id} 添加${formatGrantModeLabel(grantMode)}，范围=${existing.scope}，有效期至 ${grantExpiresAt}。`,
+        };
+      },
+    });
+
+    api.registerCommand({
+      name: APPROVAL_REJECT_COMMAND,
+      description: "Reject a pending SafeClaw request in the current admin chat.",
+      acceptsArgs: true,
+      requireAuth: false,
+      handler: async (ctx) => {
+        const commandContext: SafeClawApprovalCommandContext = {
+          channel: ctx.channel,
+          ...(ctx.senderId !== undefined ? { senderId: ctx.senderId } : {}),
+          ...(ctx.from !== undefined ? { from: ctx.from } : {}),
+          ...(ctx.to !== undefined ? { to: ctx.to } : {}),
+          ...(ctx.accountId !== undefined ? { accountId: ctx.accountId } : {}),
+          ...(ctx.args !== undefined ? { args: ctx.args } : {}),
+          isAuthorizedSender: ctx.isAuthorizedSender,
+        };
+        if (!approvalBridge.enabled) {
+          return { text: "SafeClaw 审批桥接未启用。" };
+        }
+        if (!commandContext.isAuthorizedSender || !matchesApprover(approvalBridge.approvers, commandContext)) {
+          return { text: "你无权审批 SafeClaw 请求。" };
+        }
+        const approvalId = parseApprovalId(commandContext.args);
+        if (!approvalId) {
+          return { text: `用法: /${APPROVAL_REJECT_COMMAND} <approval_id>` };
+        }
+        const existing = approvalStore.getById(approvalId);
+        if (!existing) {
+          return { text: `审批请求不存在: ${approvalId}` };
+        }
+        if (existing.status !== "pending") {
+          return { text: `审批请求当前状态为 ${existing.status}，无法重复拒绝。` };
+        }
+        approvalStore.resolve(
+          approvalId,
+          `${commandContext.channel ?? "unknown"}:${commandContext.from ?? "unknown"}`,
+          "rejected",
+        );
+        return { text: `已拒绝 ${approvalId}，不会为 ${existing.actor_id} 增加授权。` };
+      },
+    });
+
+    api.registerCommand({
+      name: APPROVAL_PENDING_COMMAND,
+      description: "List recent pending SafeClaw approval requests.",
+      acceptsArgs: false,
+      requireAuth: false,
+      handler: async (ctx) => {
+        const commandContext: SafeClawApprovalCommandContext = {
+          channel: ctx.channel,
+          ...(ctx.senderId !== undefined ? { senderId: ctx.senderId } : {}),
+          ...(ctx.from !== undefined ? { from: ctx.from } : {}),
+          ...(ctx.to !== undefined ? { to: ctx.to } : {}),
+          ...(ctx.accountId !== undefined ? { accountId: ctx.accountId } : {}),
+          ...(ctx.args !== undefined ? { args: ctx.args } : {}),
+          isAuthorizedSender: ctx.isAuthorizedSender,
+        };
+        if (!approvalBridge.enabled) {
+          return { text: "SafeClaw 审批桥接未启用。" };
+        }
+        if (!commandContext.isAuthorizedSender || !matchesApprover(approvalBridge.approvers, commandContext)) {
+          return { text: "你无权查看 SafeClaw 待审批请求。" };
+        }
+        return { text: formatPendingApprovals(approvalStore.listPending(10)) };
+      },
+    });
+
     api.on(
       "before_prompt_build",
       async (_event, ctx) => {
@@ -540,6 +1185,70 @@ const plugin = {
         const outcome = current.decisionEngine.evaluate(decisionContext, matches);
         const traceId = decisionContext.security_context.trace_id;
         const argsSummary = summarizeForLog(rawArguments, decisionLogMaxLength);
+        const ruleIds = matches.map((match) => match.rule.rule_id);
+        let effectiveDecision = outcome.decision;
+        let effectiveDecisionSource = outcome.decision_source;
+        let effectiveReasonCodes = [...outcome.reason_codes];
+        let approvalBlockReason: string | undefined;
+
+        if (outcome.decision === "challenge" && approvalBridge.enabled) {
+          const approvalSubject = resolveApprovalSubject(hookContext);
+          const approvalScope = decisionContext.scope;
+          const approved = approvalStore.findApproved(approvalSubject, approvalScope);
+          if (approved) {
+            effectiveDecision = "allow";
+            effectiveDecisionSource = "approval";
+            effectiveReasonCodes = ["APPROVAL_GRANTED"];
+          } else {
+            let pending = approvalStore.findPending(approvalSubject, approvalScope);
+            let notificationResult: ApprovalNotificationResult = {
+              sent: Boolean(pending?.notifications.length),
+              notifications: pending?.notifications ?? [],
+            };
+
+            if (!pending) {
+              pending = approvalStore.create({
+                request_key: approvalScope,
+                session_scope: approvalSubject,
+                expires_at: new Date(
+                  Date.now() +
+                    ((outcome.challenge_ttl_seconds ?? current.config.defaults.approval_ttl_seconds) * 1000),
+                ).toISOString(),
+                policy_version: current.config.policy_version,
+                actor_id: approvalSubject,
+                scope: approvalScope,
+                tool_name: normalizedToolName,
+                resource_scope: decisionContext.resource_scope,
+                resource_paths: decisionContext.resource_paths,
+                reason_codes: outcome.reason_codes,
+                rule_ids: ruleIds,
+                args_summary: argsSummary,
+              });
+            }
+
+            if (approvalBridge.targets.length > 0 && shouldResendPendingApproval(pending)) {
+              notificationResult = await notifyApprovalTargets(api, approvalBridge.targets, pending);
+              if (notificationResult.notifications.length > 0) {
+                pending =
+                  approvalStore.updateNotifications(
+                    pending.approval_id,
+                    mergeApprovalNotifications(pending.notifications, notificationResult.notifications),
+                  ) ?? pending;
+              }
+            }
+
+            approvalBlockReason = formatApprovalBlockReason({
+              toolName: event.toolName,
+              scope: decisionContext.scope,
+              traceId,
+              resourceScope: decisionContext.resource_scope,
+              reasonCodes: outcome.reason_codes,
+              rules,
+              approvalId: pending.approval_id,
+              notificationSent: notificationResult.sent || pending.notifications.length > 0,
+            });
+          }
+        }
 
         const decisionLog = [
           "safeclaw: before_tool_call",
@@ -549,14 +1258,14 @@ const plugin = {
           `resource_scope=${decisionContext.resource_scope}`,
           `tool=${normalizedToolName}`,
           `raw_tool=${event.toolName}`,
-          `decision=${outcome.decision}`,
-          `source=${outcome.decision_source}`,
+          `decision=${effectiveDecision}`,
+          `source=${effectiveDecisionSource}`,
           `rules=${rules}`,
-          `reasons=${outcome.reason_codes.join(",")}`,
+          `reasons=${effectiveReasonCodes.join(",")}`,
           `args=${argsSummary}`
         ].join(" ");
 
-        if (outcome.decision === "allow") {
+        if (effectiveDecision === "allow") {
           api.logger.info?.(decisionLog);
         } else {
           api.logger.warn?.(decisionLog);
@@ -567,9 +1276,9 @@ const plugin = {
           createEvent(
             traceId,
             "before_tool_call",
-            outcome.decision,
-            outcome.reason_codes,
-            outcome.decision_source,
+            effectiveDecision,
+            effectiveReasonCodes,
+            effectiveDecisionSource,
             decisionContext.resource_scope,
           ),
           api.logger,
@@ -581,26 +1290,44 @@ const plugin = {
           actor: decisionContext.actor_id,
           scope: decisionContext.scope,
           tool: normalizedToolName,
-          decision: outcome.decision,
-          decision_source: outcome.decision_source,
+          decision: effectiveDecision,
+          decision_source: effectiveDecisionSource,
           resource_scope: decisionContext.resource_scope,
-          reasons: outcome.reason_codes,
+          reasons: effectiveReasonCodes,
           rules
         });
 
-        if (outcome.decision === "block" || outcome.decision === "challenge") {
+        if (effectiveDecision === "block") {
           return {
             block: true,
             blockReason: formatToolBlockReason(
               event.toolName,
               decisionContext.scope,
               traceId,
-              outcome.decision,
-              outcome.decision_source,
+              effectiveDecision,
+              effectiveDecisionSource,
               decisionContext.resource_scope,
-              outcome.reason_codes,
+              effectiveReasonCodes,
               rules,
             )
+          };
+        }
+
+        if (effectiveDecision === "challenge") {
+          return {
+            block: true,
+            blockReason:
+              approvalBlockReason ??
+              formatToolBlockReason(
+                event.toolName,
+                decisionContext.scope,
+                traceId,
+                effectiveDecision,
+                effectiveDecisionSource,
+                decisionContext.resource_scope,
+                effectiveReasonCodes,
+                rules,
+              )
           };
         }
 
@@ -778,6 +1505,16 @@ const plugin = {
           return { cancel: true };
         }
         return { content: sanitized.value as string };
+      },
+      { priority: 100 },
+    );
+
+    api.on(
+      "gateway_stop",
+      async () => {
+        approvalStore.close();
+        statusStore.close();
+        liveConfig.close();
       },
       { priority: 100 },
     );

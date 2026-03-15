@@ -11,8 +11,11 @@
 
 ## Challenge Approvals
 - Monitor challenge decisions from `SecurityDecisionEvent`.
-- Resolve pending approvals before `expires_at`.
-- Expired or rejected approvals cause replayed calls to return `block`.
+- If `approvalBridge` is enabled, administrators can review pending requests in chat with `/safeclaw-pending`.
+- Add a temporary authorization with `/safeclaw-approve <approval_id>` and a long-lived authorization with `/safeclaw-approve <approval_id> long`.
+- Reject a request with `/safeclaw-reject <approval_id>`.
+- Approved requests grant the same subject access in the same `scope` until `expires_at`; they are not tied to one exact request replay anymore.
+- Expired or rejected approvals cause challenged calls to return `block` and require a fresh authorization request.
 
 ## Event Delivery
 - If webhook delivery fails, inspect the host's telemetry around `plugin.events.getStats()`.

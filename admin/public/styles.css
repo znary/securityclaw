@@ -269,7 +269,19 @@ button.ghost {
 
 .overview-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.45fr) minmax(300px, 0.9fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  align-items: stretch;
+}
+
+.overview-grid > .panel-card {
+  height: 100%;
+}
+
+.overview-charts {
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
 }
 
@@ -342,6 +354,299 @@ button.ghost {
   background: #f7fbff;
 }
 
+.chart-card {
+  display: grid;
+  gap: 14px;
+  align-content: start;
+}
+
+.trend-card {
+  grid-column: 1 / -1;
+}
+
+.chart-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.chart-head h3 {
+  margin: 0;
+  font-size: 19px;
+}
+
+.chart-subtitle {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.chart-empty {
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: var(--bg-subtle);
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.chart-surface {
+  min-height: 230px;
+  border-radius: var(--radius-md);
+  border: 1px solid #d9e6f4;
+  background: linear-gradient(180deg, #ffffff 0%, #f6faff 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  padding: 12px 12px 6px;
+  position: relative;
+}
+
+.chart-card .recharts-legend-item-text {
+  color: var(--muted) !important;
+  font-size: 12px;
+}
+
+.chart-card .recharts-cartesian-axis-tick-value {
+  fill: #607891;
+}
+
+.chart-card .recharts-cartesian-axis-line,
+.chart-card .recharts-cartesian-axis-tick-line {
+  stroke: #c8d8eb;
+}
+
+.chart-tooltip {
+  min-width: 120px;
+  max-width: 260px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid #d5e2f1;
+  background: #fff;
+  box-shadow: 0 10px 24px rgba(16, 44, 76, 0.14);
+}
+
+.chart-tooltip-title {
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.chart-tooltip-row {
+  margin-top: 4px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.chart-tooltip-key,
+.chart-tooltip-value {
+  color: #4c6682;
+  font-size: 12px;
+}
+
+.donut-layout {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr);
+  gap: 18px;
+  align-items: center;
+}
+
+.donut-shell {
+  width: 190px;
+  height: 190px;
+  margin: 0 auto;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+}
+
+.donut-inner {
+  width: 118px;
+  height: 118px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--bg-elevated);
+  display: grid;
+  place-items: center;
+  text-align: center;
+  gap: 2px;
+}
+
+.donut-inner strong {
+  font-size: 28px;
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+
+.donut-inner span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.donut-legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.donut-legend-item {
+  min-height: 38px;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: #f8fbff;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.legend-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+
+.legend-label {
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.legend-value {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.distribution-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.distribution-item {
+  display: grid;
+  gap: 6px;
+}
+
+.distribution-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.distribution-label {
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.distribution-value {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  flex: 0 0 auto;
+}
+
+.distribution-track {
+  height: 8px;
+  border-radius: 999px;
+  background: #ecf2f9;
+  overflow: hidden;
+}
+
+.distribution-bar {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+}
+
+.trend-chart-shell {
+  border-radius: var(--radius-md);
+  border: 1px solid var(--line);
+  background: #f8fbff;
+  padding: 10px 10px 4px;
+}
+
+.trend-chart {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.trend-axis {
+  stroke: #cdd9e8;
+  stroke-width: 1.2;
+}
+
+.trend-line {
+  fill: none;
+  stroke-width: 2.4;
+}
+
+.trend-line.total {
+  stroke: #1e40af;
+}
+
+.trend-line.risk {
+  stroke: #c03a4b;
+  stroke-dasharray: 5 5;
+}
+
+.trend-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.trend-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.trend-chip {
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+}
+
+.trend-chip.total {
+  color: #1e40af;
+  background: rgba(30, 64, 175, 0.12);
+}
+
+.trend-chip.risk {
+  color: var(--bad);
+  background: var(--bad-soft);
+}
+
+.trend-peak {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .insight-head h3 {
   margin: 8px 0 0;
   font-size: 24px;
@@ -359,8 +664,7 @@ button.ghost {
   gap: 10px;
 }
 
-.insight-item,
-.latest-event {
+.insight-item {
   padding: 14px 16px;
   border-radius: var(--radius-md);
   border: 1px solid var(--line);
@@ -381,25 +685,6 @@ button.ghost {
 
 .insight-item strong {
   font-size: 18px;
-}
-
-.latest-event-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-}
-
-.latest-event-head span {
-  color: var(--muted);
-  font-size: 13px;
-}
-
-.latest-event p {
-  margin: 10px 0 0;
-  color: var(--ink);
-  line-height: 1.6;
-  font-size: 14px;
 }
 
 .header-actions,
@@ -852,6 +1137,14 @@ tbody tr:hover {
     grid-template-columns: 1fr;
   }
 
+  .overview-charts {
+    grid-template-columns: 1fr;
+  }
+
+  .trend-card {
+    grid-column: auto;
+  }
+
   .rules-layout.with-side {
     grid-template-columns: 1fr;
   }
@@ -882,6 +1175,10 @@ tbody tr:hover {
   .workspace-heading {
     align-items: flex-start;
     gap: 10px;
+  }
+
+  .chart-head {
+    align-items: flex-start;
   }
 
   .tablist {
@@ -930,6 +1227,12 @@ tbody tr:hover {
 @media (max-width: 560px) {
   .workspace-title h1 {
     font-size: 30px;
+  }
+
+  .distribution-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
   }
 
   .stats {

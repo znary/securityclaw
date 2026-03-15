@@ -1,5 +1,18 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import {
+  ResponsiveContainer,
+  Cell,
+  Tooltip,
+  Legend,
+  BarChart,
+  Bar,
+  CartesianGrid,
+  XAxis,
+  YAxis,
+  LineChart,
+  Line
+} from "recharts";
 
 const REFRESH_INTERVAL_MS = 15000;
 const DECISIONS_PER_PAGE = 12;
@@ -25,11 +38,17 @@ const DECISION_TEXT = {
   block: "拦截"
 };
 const DECISION_OPTIONS = ["allow", "warn", "challenge", "block"];
+const CHART_COLORS = ["#1e4f94", "#2d66ab", "#3f7fc2", "#5f97d1", "#7badde", "#9dc3e8", "#c2dcf2", "#dbeaf8"];
 
 const DECISION_SOURCE_TEXT = {
   rule: "规则命中",
   default: "默认放行",
   approval: "审批放行"
+};
+
+const SCOPE_TEXT = {
+  default: "默认会话",
+  workspace: "工作区会话"
 };
 
 const CONTROL_DOMAIN_TEXT = {
@@ -214,6 +233,11 @@ function decisionLabel(decision) {
 
 function decisionSourceLabel(source) {
   return DECISION_SOURCE_TEXT[source] || "-";
+}
+
+function scopeLabel(scope) {
+  if (!scope) return "未知作用域";
+  return SCOPE_TEXT[scope] || scope;
 }
 
 function resourceScopeLabel(scope) {
@@ -474,6 +498,102 @@ function formatPercent(value, total) {
   return `${Math.round((value / total) * 100)}%`;
 }
 
+function normalizeLabel(value, fallback = "未标记") {
+  if (typeof value !== "string") {
+    return fallback;
+  }
+  const text = value.trim();
+  return text || fallback;
+}
+
+function buildDistribution(items, getLabel, options = {}) {
+  const fallbackLabel = options.fallbackLabel || "未标记";
+  const limit = typeof options.limit === "number" ? options.limit : 0;
+  const counts = new Map();
+
+  items.forEach((item) => {
+    const label = normalizeLabel(getLabel(item), fallbackLabel);
+    counts.set(label, (counts.get(label) || 0) + 1);
+  });
+
+  const sorted = Array.from(counts.entries())
+    .map(([label, count]) => ({ label, count }))
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, "zh-CN"));
+
+  if (limit > 0 && sorted.length > limit) {
+    const top = sorted.slice(0, limit);
+    const rest = sorted.slice(limit).reduce((sum, item) => sum + item.count, 0);
+    if (rest > 0) {
+      top.push({ label: "其他", count: rest });
+    }
+    return top;
+  }
+
+  return sorted;
+}
+
+function withChartColors(items) {
+  return items.map((item, index) => ({
+    ...item,
+    color: item.color || CHART_COLORS[index % CHART_COLORS.length]
+  }));
+}
+
+function parseRuleIds(rawRules) {
+  if (typeof rawRules !== "string" || !rawRules.trim() || rawRules.trim() === "-") {
+    return [];
+  }
+  return rawRules
+    .split(",")
+    .map((value) => value.trim())
+    .filter((value) => value && value !== "-");
+}
+
+function buildTrendSeries(records, bucketCount = 12, bucketHours = 2) {
+  const bucketMs = bucketHours * 60 * 60 * 1000;
+  const alignedEnd = Math.floor(Date.now() / bucketMs) * bucketMs + bucketMs;
+  const start = alignedEnd - bucketCount * bucketMs;
+  const buckets = Array.from({ length: bucketCount }, (_, index) => ({
+    startTs: start + index * bucketMs,
+    total: 0,
+    risk: 0
+  }));
+
+  records.forEach((item) => {
+    const ts = Date.parse(item?.ts || "");
+    if (!Number.isFinite(ts) || ts < start || ts >= alignedEnd) {
+      return;
+    }
+    const bucketIndex = Math.floor((ts - start) / bucketMs);
+    if (bucketIndex < 0 || bucketIndex >= buckets.length) {
+      return;
+    }
+    buckets[bucketIndex].total += 1;
+    if (item?.decision !== "allow") {
+      buckets[bucketIndex].risk += 1;
+    }
+  });
+
+  return {
+    start,
+    end: alignedEnd,
+    bucketHours,
+    buckets
+  };
+}
+
+function formatClock(ts) {
+  const date = new Date(ts);
+  if (Number.isNaN(date.getTime())) {
+    return "--:--";
+  }
+  return date.toLocaleTimeString("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  });
+}
+
 function buildPageItems(currentPage, totalPages) {
   if (totalPages <= 5) {
     return Array.from({ length: totalPages }, (_, index) => index + 1);
@@ -486,6 +606,80 @@ function buildPageItems(currentPage, totalPages) {
 
 function DecisionTag({ decision }) {
   return <span className={`tag ${decision || "allow"}`}>{decisionLabel(decision)}</span>;
+}
+
+function trimLabel(value, max = 10) {
+  if (typeof value !== "string") {
+    return "";
+  }
+  return value.length > max ? `${value.slice(0, max)}…` : value;
+}
+
+function ChartTooltip({ active, payload, label }) {
+  if (!active || !Array.isArray(payload) || payload.length === 0) {
+    return null;
+  }
+  return (
+    <div className="chart-tooltip">
+      <div className="chart-tooltip-title">{label || payload[0]?.name || "明细"}</div>
+      {payload.map((entry, index) => (
+        <div key={`${entry.dataKey || entry.name || "value"}-${index}`} className="chart-tooltip-row">
+          <span className="chart-tooltip-key">{entry.name || entry.dataKey}</span>
+          <span className="chart-tooltip-value">{entry.value}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function DistributionChart({ title, subtitle, items, total, emptyText }) {
+  const data = items.map((item) => ({
+    name: item.label,
+    value: item.count,
+    color: item.color,
+    percent: total > 0 ? Math.round((item.count / total) * 100) : 0
+  }));
+  const height = 270;
+
+  return (
+    <article className="panel-card chart-card">
+      <div className="chart-head">
+        <h3>{title}</h3>
+        <span className="chart-subtitle">{subtitle}</span>
+      </div>
+      {data.length === 0 ? (
+        <div className="chart-empty">{emptyText}</div>
+      ) : (
+        <div className="chart-surface">
+          <ResponsiveContainer width="100%" height={height}>
+            <BarChart data={data} margin={{ top: 4, right: 8, left: 6, bottom: 34 }}>
+              <CartesianGrid stroke="#e7eef8" strokeDasharray="3 3" vertical={false} />
+              <YAxis
+                allowDecimals={false}
+                tick={{ fill: "#5f748b", fontSize: 12 }}
+                axisLine={{ stroke: "#c8d8eb" }}
+                tickLine={false}
+              />
+              <XAxis
+                dataKey="name"
+                tick={{ fill: "#5f748b", fontSize: 12 }}
+                tickFormatter={(value) => trimLabel(value, 8)}
+                interval={0}
+                axisLine={{ stroke: "#c8d8eb" }}
+                tickLine={false}
+              />
+              <Tooltip content={<ChartTooltip />} />
+              <Bar dataKey="value" name="次数" radius={[6, 6, 0, 0]} maxBarSize={54}>
+                {data.map((entry) => (
+                  <Cell key={entry.name} fill={entry.color} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+    </article>
+  );
 }
 
 function App() {
@@ -578,6 +772,89 @@ function App() {
     watch: Number(totals.warn || 0) + Number(totals.challenge || 0),
     block: Number(totals.block || 0)
   };
+  const beforeToolDecisions = useMemo(
+    () => decisions.filter((item) => item.hook === "before_tool_call"),
+    [decisions]
+  );
+  const analyticsSamples = beforeToolDecisions.length > 0 ? beforeToolDecisions : decisions;
+  const policyTitleById = useMemo(() => {
+    const table = new Map();
+    policies.forEach((policy, index) => {
+      if (policy?.rule_id) {
+        table.set(policy.rule_id, policyTitle(policy, index));
+      }
+    });
+    return table;
+  }, [policies]);
+  const messageSourceDistribution = useMemo(
+    () => withChartColors(
+      buildDistribution(
+        analyticsSamples,
+        (item) => `${normalizeLabel(item.actor, "匿名会话")} · ${scopeLabel(item.scope)}`,
+        { limit: 6, fallbackLabel: "未标记" }
+      )
+    ),
+    [analyticsSamples]
+  );
+  const decisionSourceDistribution = useMemo(
+    () => withChartColors(
+      buildDistribution(
+        analyticsSamples,
+        (item) => (item.decision_source ? decisionSourceLabel(item.decision_source) : "未标记"),
+        { limit: 5, fallbackLabel: "未标记" }
+      )
+    ),
+    [analyticsSamples]
+  );
+  const strategySource = useMemo(() => {
+    const riskSamples = analyticsSamples.filter((item) => item.decision !== "allow");
+    return riskSamples.length > 0 ? riskSamples : analyticsSamples;
+  }, [analyticsSamples]);
+  const strategyHitDistribution = useMemo(() => {
+    const counts = new Map();
+    strategySource.forEach((item) => {
+      parseRuleIds(item.rules).forEach((ruleId) => {
+        const label = policyTitleById.get(ruleId) || ruleId;
+        counts.set(label, (counts.get(label) || 0) + 1);
+      });
+    });
+    const distribution = Array.from(counts.entries())
+      .map(([label, count]) => ({ label, count }))
+      .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, "zh-CN"));
+    const top = distribution.slice(0, 8);
+    const rest = distribution.slice(8).reduce((sum, item) => sum + item.count, 0);
+    if (rest > 0) {
+      top.push({ label: "其他", count: rest });
+    }
+    return withChartColors(top);
+  }, [policyTitleById, strategySource]);
+  const strategyHitTotal = strategyHitDistribution.reduce((sum, item) => sum + item.count, 0);
+  const toolDistribution = useMemo(
+    () => withChartColors(
+      buildDistribution(
+        analyticsSamples,
+        (item) => normalizeLabel(item.tool, "未知工具"),
+        { limit: 6, fallbackLabel: "未知工具" }
+      )
+    ),
+    [analyticsSamples]
+  );
+  const trendSeries = useMemo(() => buildTrendSeries(analyticsSamples), [analyticsSamples]);
+  const trendTotals = useMemo(() => trendSeries.buckets.map((bucket) => bucket.total), [trendSeries]);
+  const trendRisks = useMemo(() => trendSeries.buckets.map((bucket) => bucket.risk), [trendSeries]);
+  const trendData = useMemo(
+    () => trendSeries.buckets.map((bucket) => ({
+      time: formatClock(bucket.startTs),
+      total: bucket.total,
+      risk: bucket.risk
+    })),
+    [trendSeries]
+  );
+  const trendTickStep = Math.max(1, Math.floor(trendData.length / 6));
+  const trendPeak = useMemo(() => Math.max(...trendTotals, 1), [trendTotals]);
+  const trendRangeLabel = `${formatClock(trendSeries.start)} - ${formatClock(trendSeries.end)}`;
+  const trendTotalCount = trendTotals.reduce((sum, value) => sum + value, 0);
+  const trendRiskCount = trendRisks.reduce((sum, value) => sum + value, 0);
 
   const savePolicies = useCallback(async (nextPolicies) => {
     const normalizedPolicies = nextPolicies.map((policy) => ({ ...policy, enabled: true }));
@@ -805,14 +1082,95 @@ function App() {
                     <strong>{policies.length}</strong>
                   </div>
                 </div>
-                <div className="latest-event">
-                  <div className="latest-event-head">
-                    <span>最新决策</span>
-                    {latestDecision ? <DecisionTag decision={latestDecision.decision} /> : null}
-                  </div>
-                  <p>{latestDecision ? toArray(latestDecision.reasons).join("，") || "无附加原因" : "暂无决策记录"}</p>
-                </div>
               </aside>
+            </div>
+
+            <div className="overview-charts">
+              <DistributionChart
+                title="消息来源分布"
+                subtitle="actor + scope"
+                items={messageSourceDistribution}
+                total={analyticsSamples.length}
+                emptyText="暂无消息来源数据"
+              />
+
+              <DistributionChart
+                title="决策来源分布"
+                subtitle="rule / default / approval"
+                items={decisionSourceDistribution}
+                total={analyticsSamples.length}
+                emptyText="暂无决策来源数据"
+              />
+
+              <DistributionChart
+                title="拦截策略命中 Top"
+                subtitle={strategySource.length > 0 ? "按规则命中次数排序" : "暂无风险样本"}
+                items={strategyHitDistribution}
+                total={strategyHitTotal}
+                emptyText="暂无策略命中记录"
+              />
+
+              <DistributionChart
+                title="工具调用分布"
+                subtitle="按最近样本聚合"
+                items={toolDistribution}
+                total={analyticsSamples.length}
+                emptyText="暂无工具调用记录"
+              />
+
+              <article className="panel-card chart-card trend-card">
+                <div className="chart-head">
+                  <h3>24 小时趋势</h3>
+                  <span className="chart-subtitle">{trendRangeLabel}（{trendSeries.bucketHours}h / 桶）</span>
+                </div>
+                <div className="chart-surface">
+                  <ResponsiveContainer width="100%" height={260}>
+                    <LineChart data={trendData} margin={{ top: 12, right: 24, left: 4, bottom: 0 }}>
+                      <CartesianGrid stroke="#e4ecf6" strokeDasharray="3 3" />
+                      <XAxis
+                        dataKey="time"
+                        tick={{ fill: "#5f748b", fontSize: 12 }}
+                        tickFormatter={(value, index) => (index % trendTickStep === 0 ? value : "")}
+                        axisLine={{ stroke: "#c8d8eb" }}
+                        tickLine={false}
+                      />
+                      <YAxis
+                        allowDecimals={false}
+                        tick={{ fill: "#5f748b", fontSize: 12 }}
+                        axisLine={{ stroke: "#c8d8eb" }}
+                        tickLine={false}
+                      />
+                      <Tooltip content={<ChartTooltip />} />
+                      <Legend />
+                      <Line
+                        type="monotone"
+                        dataKey="total"
+                        name="总请求"
+                        stroke="#1e40af"
+                        strokeWidth={2.5}
+                        dot={{ r: 2 }}
+                        activeDot={{ r: 4 }}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="risk"
+                        name="风险请求"
+                        stroke="#c03a4b"
+                        strokeWidth={2.5}
+                        dot={{ r: 2 }}
+                        activeDot={{ r: 4 }}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="trend-meta">
+                  <div className="trend-legend">
+                    <span className="trend-chip total">总请求 {trendTotalCount}</span>
+                    <span className="trend-chip risk">风险请求 {trendRiskCount}</span>
+                  </div>
+                  <span className="trend-peak">峰值 {trendPeak}</span>
+                </div>
+              </article>
             </div>
           </section>
         ) : null}

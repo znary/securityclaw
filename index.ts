@@ -98,6 +98,7 @@ const APPROVAL_APPROVE_COMMAND = "safeclaw-approve";
 const APPROVAL_REJECT_COMMAND = "safeclaw-reject";
 const APPROVAL_PENDING_COMMAND = "safeclaw-pending";
 const APPROVAL_LONG_GRANT_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const APPROVAL_DISPLAY_TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 const APPROVAL_NOTIFICATION_MAX_ATTEMPTS = 3;
 const APPROVAL_NOTIFICATION_RETRY_DELAYS_MS = [250, 750];
 const APPROVAL_NOTIFICATION_RESEND_COOLDOWN_MS = 60_000;
@@ -398,6 +399,8 @@ function formatApprovalPrompt(record: StoredApprovalRecord): string {
   const rules = record.rule_ids.length > 0 ? record.rule_ids.join(", ") : "未命中具体规则";
   const reasons = record.reason_codes.length > 0 ? record.reason_codes.join(", ") : "无附加原因";
   const summary = record.args_summary ? trimText(record.args_summary, 220) : "无参数摘要";
+  const temporaryExpiresAt = resolveApprovalGrantExpiry(record, "temporary");
+  const longtermExpiresAt = resolveApprovalGrantExpiry(record, "longterm");
 
   return [
     "SafeClaw 授权请求",
@@ -410,8 +413,9 @@ function formatApprovalPrompt(record: StoredApprovalRecord): string {
     `规则: ${rules}`,
     `原因: ${reasons}`,
     `参数摘要: ${summary}`,
-    `临时授权: /${APPROVAL_APPROVE_COMMAND} ${record.approval_id}`,
-    `长期授权: /${APPROVAL_APPROVE_COMMAND} ${record.approval_id} long`,
+    `待审批截至: ${formatTimestampForApproval(record.expires_at)}`,
+    `临时授权: /${APPROVAL_APPROVE_COMMAND} ${record.approval_id} (${formatApprovalGrantDuration(record, "temporary")}，有效至 ${formatTimestampForApproval(temporaryExpiresAt)})`,
+    `长期授权: /${APPROVAL_APPROVE_COMMAND} ${record.approval_id} long (${formatApprovalGrantDuration(record, "longterm")}，有效至 ${formatTimestampForApproval(longtermExpiresAt)})`,
     `拒绝: /${APPROVAL_REJECT_COMMAND} ${record.approval_id}`,
   ].join("\n");
 }
@@ -423,7 +427,7 @@ function formatPendingApprovals(records: StoredApprovalRecord[]): string {
   return [
     `待审批请求 ${records.length} 条:`,
     ...records.map((record) =>
-      `- ${record.approval_id} | ${record.actor_id} | ${record.scope} | ${record.tool_name} | ${record.requested_at}`,
+      `- ${record.approval_id} | ${record.actor_id} | ${record.scope} | ${record.tool_name} | ${formatTimestampForApproval(record.requested_at)}`,
     ),
   ].join("\n");
 }
@@ -434,6 +438,60 @@ function parseTimestampMs(value: string | undefined): number | undefined {
   }
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function formatDurationMs(durationMs: number): string {
+  const totalMinutes = Math.max(1, Math.round(durationMs / 60_000));
+  const totalHours = totalMinutes / 60;
+  const totalDays = totalHours / 24;
+  if (Number.isInteger(totalDays) && totalDays >= 1) {
+    return `${totalDays}天`;
+  }
+  if (Number.isInteger(totalHours) && totalHours >= 1) {
+    return `${totalHours}小时`;
+  }
+  return `${totalMinutes}分钟`;
+}
+
+function formatTimestampForApproval(value: string | undefined, timeZone = APPROVAL_DISPLAY_TIMEZONE): string {
+  const timestamp = parseTimestampMs(value);
+  if (timestamp === undefined) {
+    return value ?? "未知";
+  }
+
+  try {
+    const parts = new Intl.DateTimeFormat("zh-CN", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    }).formatToParts(new Date(timestamp));
+    const values = parts.reduce<Record<string, string>>((output, part) => {
+      if (part.type !== "literal") {
+        output[part.type] = part.value;
+      }
+      return output;
+    }, {});
+    return `${values.year}-${values.month}-${values.day} ${values.hour}:${values.minute}:${values.second} (${timeZone})`;
+  } catch {
+    return `${new Date(timestamp).toISOString()} (${timeZone})`;
+  }
+}
+
+function resolveTemporaryGrantDurationMs(record: StoredApprovalRecord): number {
+  const requestedAt = parseTimestampMs(record.requested_at) ?? Date.now();
+  const expiresAt = parseTimestampMs(record.expires_at) ?? (requestedAt + (15 * 60 * 1000));
+  return Math.max(60_000, expiresAt - requestedAt);
+}
+
+function formatApprovalGrantDuration(record: StoredApprovalRecord, mode: ApprovalGrantMode): string {
+  return mode === "longterm"
+    ? formatDurationMs(APPROVAL_LONG_GRANT_TTL_MS)
+    : formatDurationMs(resolveTemporaryGrantDurationMs(record));
 }
 
 function shouldResendPendingApproval(record: StoredApprovalRecord, nowMs = Date.now()): boolean {
@@ -489,17 +547,14 @@ function resolveApprovalGrantExpiry(record: StoredApprovalRecord, mode: Approval
   if (mode === "longterm") {
     return new Date(Date.now() + APPROVAL_LONG_GRANT_TTL_MS).toISOString();
   }
-  const requestedAt = parseTimestampMs(record.requested_at) ?? Date.now();
-  const expiresAt = parseTimestampMs(record.expires_at) ?? (requestedAt + (15 * 60 * 1000));
-  const durationMs = Math.max(60_000, expiresAt - requestedAt);
-  return new Date(Date.now() + durationMs).toISOString();
+  return new Date(Date.now() + resolveTemporaryGrantDurationMs(record)).toISOString();
 }
 
 async function sendApprovalNotification(
   api: OpenClawPluginApi,
   target: ChatApprovalTarget,
   message: string,
-  approvalId: string,
+  record: StoredApprovalRecord,
 ): Promise<StoredApprovalNotification> {
   const notification: StoredApprovalNotification = {
     channel: target.channel,
@@ -522,20 +577,20 @@ async function sendApprovalNotification(
       buttons: [
         [
           {
-            text: "临时批准",
-            callback_data: `/${APPROVAL_APPROVE_COMMAND} ${approvalId}`,
+            text: `临时批准(${formatApprovalGrantDuration(record, "temporary")})`,
+            callback_data: `/${APPROVAL_APPROVE_COMMAND} ${record.approval_id}`,
             style: "success",
           },
           {
-            text: "长期授权",
-            callback_data: `/${APPROVAL_APPROVE_COMMAND} ${approvalId} long`,
+            text: `长期授权(${formatApprovalGrantDuration(record, "longterm")})`,
+            callback_data: `/${APPROVAL_APPROVE_COMMAND} ${record.approval_id} long`,
             style: "primary",
           },
         ],
         [
           {
             text: "拒绝",
-            callback_data: `/${APPROVAL_REJECT_COMMAND} ${approvalId}`,
+            callback_data: `/${APPROVAL_REJECT_COMMAND} ${record.approval_id}`,
             style: "danger",
           },
         ],
@@ -668,7 +723,7 @@ async function notifyApprovalTargets(
     let lastError: unknown;
     for (let attempt = 1; attempt <= APPROVAL_NOTIFICATION_MAX_ATTEMPTS; attempt += 1) {
       try {
-        const notification = await sendApprovalNotification(api, target, prompt, record.approval_id);
+        const notification = await sendApprovalNotification(api, target, prompt, record);
         notifications.push(notification);
         sent = true;
         delivered = true;
@@ -1060,7 +1115,7 @@ const plugin = {
           { expires_at: grantExpiresAt },
         );
         return {
-          text: `已为 ${existing.actor_id} 添加${formatGrantModeLabel(grantMode)}，范围=${existing.scope}，有效期至 ${grantExpiresAt}。`,
+          text: `已为 ${existing.actor_id} 添加${formatGrantModeLabel(grantMode)}，范围=${existing.scope}，有效期至 ${formatTimestampForApproval(grantExpiresAt)}。`,
         };
       },
     });

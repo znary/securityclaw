@@ -256,6 +256,11 @@ test("chat approval bridge reuses pending authorization and allows the same subj
     assert.match(String(first?.blockReason), /approval_id=/);
     assert.equal(harness.sentMessages.length, 1);
     assert.match(harness.sentMessages[0].text, /SafeClaw 授权请求/);
+    assert.match(harness.sentMessages[0].text, /待审批截至: .+\(.+\)/);
+    assert.match(harness.sentMessages[0].text, /临时授权: .*10分钟/);
+    const buttons = harness.sentMessages[0].opts?.buttons as Array<Array<{ text: string }>> | undefined;
+    assert.equal(buttons?.[0]?.[0]?.text, "临时批准(10分钟)");
+    assert.equal(buttons?.[0]?.[1]?.text, "长期授权(30天)");
 
     const secondPending = await beforeToolCall(
       {
@@ -289,6 +294,7 @@ test("chat approval bridge reuses pending authorization and allows the same subj
       config: harness.api.config,
     });
     assert.match(String(pendingReply.text), /filesystem\.list/);
+    assert.match(String(pendingReply.text), /\(.+\)/);
 
     const approveCommand = harness.commands.get("safeclaw-approve");
     assert.ok(approveCommand);
@@ -302,6 +308,7 @@ test("chat approval bridge reuses pending authorization and allows the same subj
       config: harness.api.config,
     });
     assert.match(String(approveReply.text), /临时授权/);
+    assert.match(String(approveReply.text), /有效期至 .+\(.+\)/);
 
     const approved = await beforeToolCall(
       {

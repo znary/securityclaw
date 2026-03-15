@@ -303,3 +303,43 @@ test("gateway classifies sqlite access to Messages chat.db and blocks OTP reads"
     harness.cleanup();
   }
 });
+
+test("gateway maps shell directory enumeration to filesystem.list rules", async () => {
+  const harness = await createBeforeToolCallHook();
+  try {
+    const blocked = await harness.beforeToolCall(
+      {
+        toolName: "exec",
+        params: {
+          command: "find ~/Downloads -maxdepth 1 -type f -print",
+        },
+      },
+      DEFAULT_GATEWAY_CTX,
+    );
+
+    assert.deepEqual(blocked?.block, true);
+    assert.match(String(blocked?.blockReason), /SENSITIVE_DIRECTORY_ENUMERATION_REQUIRES_APPROVAL/);
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("gateway maps shell file writes to filesystem.write rules", async () => {
+  const harness = await createBeforeToolCallHook();
+  try {
+    const blocked = await harness.beforeToolCall(
+      {
+        toolName: "exec",
+        params: {
+          command: "echo secret > ~/Downloads/safeclaw-demo.txt",
+        },
+      },
+      DEFAULT_GATEWAY_CTX,
+    );
+
+    assert.deepEqual(blocked?.block, true);
+    assert.match(String(blocked?.blockReason), /OUTSIDE_WRITE_BLOCK/);
+  } finally {
+    harness.cleanup();
+  }
+});

@@ -27,6 +27,7 @@ import { RuntimeStatusStore } from "./src/monitoring/status_store.ts";
 import { startAdminServer } from "./admin/server.ts";
 import { ensureAdminAssetsBuilt } from "./src/admin/build.ts";
 import { shouldAutoStartAdminServer } from "./src/admin/runtime_guard.ts";
+import { inferShellFilesystemSemantic } from "./src/domain/services/shell_filesystem_inference.ts";
 import type {
   DecisionContext,
   DecisionSource,
@@ -542,6 +543,7 @@ function deriveToolContext(
   resourcePaths: string[],
   workspaceDir?: string,
 ): {
+  inferredToolName?: string;
   toolGroup?: string;
   operation?: string;
   resourceScope: ResourceScope;
@@ -552,6 +554,7 @@ function deriveToolContext(
   let nextResourceScope = resourceScope;
   let toolGroup = normalizedToolName ? inferToolGroup(normalizedToolName) : undefined;
   let operation = normalizedToolName ? inferOperation(normalizedToolName) : undefined;
+  let inferredToolName: string | undefined;
   const tags: string[] = [];
 
   if (normalizedToolName === "shell.exec") {
@@ -566,10 +569,19 @@ function deriveToolContext(
       nextResourcePaths = classified.resourcePaths;
       nextResourceScope = classified.resourceScope;
       tags.push("messages_shell_access");
+    } else {
+      const shellSemantic = inferShellFilesystemSemantic(commandText, nextResourcePaths);
+      if (shellSemantic) {
+        inferredToolName = shellSemantic.toolName;
+        toolGroup = "filesystem";
+        operation = shellSemantic.operation;
+        tags.push("shell_filesystem_access", `shell_filesystem_operation:${shellSemantic.operation}`);
+      }
     }
   }
 
   return {
+    ...(inferredToolName !== undefined ? { inferredToolName } : {}),
     ...(toolGroup !== undefined ? { toolGroup } : {}),
     ...(operation !== undefined ? { operation } : {}),
     resourceScope: nextResourceScope,
@@ -1271,6 +1283,7 @@ function buildDecisionContext(
   const scope = config.environment || runtimeScope;
   const normalizedToolName = toolName ? normalizeToolName(toolName) : undefined;
   const derivedToolContext = deriveToolContext(normalizedToolName, args, resourceScope, resourcePaths, workspace);
+  const effectiveToolName = derivedToolContext.inferredToolName ?? normalizedToolName;
   const mergedTags = [...new Set([...tags, ...derivedToolContext.tags, `resource_scope:${derivedToolContext.resourceScope}`])];
   const toolGroup = derivedToolContext.toolGroup;
   const operation = derivedToolContext.operation;
@@ -1284,7 +1297,7 @@ function buildDecisionContext(
   return {
     actor_id: ctx.agentId ?? "unknown-agent",
     scope,
-    ...(normalizedToolName !== undefined ? { tool_name: normalizedToolName } : {}),
+    ...(effectiveToolName !== undefined ? { tool_name: effectiveToolName } : {}),
     ...(toolGroup !== undefined ? { tool_group: toolGroup } : {}),
     ...(operation !== undefined ? { operation } : {}),
     tags: mergedTags,
@@ -1678,10 +1691,11 @@ const plugin = {
         const outcome = current.decisionEngine.evaluate(decisionContext, matches);
         const traceId = decisionContext.security_context.trace_id;
         const ruleIds = matches.map((match) => match.rule.rule_id);
+        const effectiveToolName = decisionContext.tool_name ?? normalizedToolName ?? "unknown-tool";
         const approvalRequestKey = createApprovalRequestKey({
           policy_version: current.config.policy_version,
           scope: decisionContext.scope,
-          tool_name: normalizedToolName,
+          tool_name: effectiveToolName,
           resource_scope: decisionContext.resource_scope,
           resource_paths: [],
           params: {
@@ -1722,7 +1736,7 @@ const plugin = {
                 policy_version: current.config.policy_version,
                 actor_id: approvalSubject,
                 scope: approvalScope,
-                tool_name: normalizedToolName,
+                tool_name: effectiveToolName,
                 resource_scope: decisionContext.resource_scope,
                 resource_paths: decisionContext.resource_paths,
                 reason_codes: outcome.reason_codes,
@@ -1761,7 +1775,7 @@ const plugin = {
           `actor=${decisionContext.actor_id}`,
           `scope=${decisionContext.scope}`,
           `resource_scope=${decisionContext.resource_scope}`,
-          `tool=${normalizedToolName}`,
+          `tool=${effectiveToolName}`,
           `raw_tool=${event.toolName}`,
           `decision=${effectiveDecision}`,
           `source=${effectiveDecisionSource}`,
@@ -1794,7 +1808,7 @@ const plugin = {
           trace_id: traceId,
           actor: decisionContext.actor_id,
           scope: decisionContext.scope,
-          tool: normalizedToolName,
+          tool: effectiveToolName,
           decision: effectiveDecision,
           decision_source: effectiveDecisionSource,
           resource_scope: decisionContext.resource_scope,

@@ -10,6 +10,7 @@ import type {
   LabelContext,
   VolumeContext
 } from "../models/resource_context.ts";
+import { inferShellFilesystemSemantic } from "./shell_filesystem_inference.ts";
 
 const HOME_DIR = os.homedir();
 const PATH_KEY_PATTERN = /(path|paths|file|files|dir|cwd|target|output|input|source|destination|dest|root)/i;
@@ -74,6 +75,13 @@ export class ContextInferenceService {
         nextResourcePaths = classified.resourcePaths;
         nextResourceScope = classified.resourceScope;
         tags.push("messages_shell_access");
+      } else {
+        const shellSemantic = inferShellFilesystemSemantic(commandText, nextResourcePaths);
+        if (shellSemantic) {
+          toolGroup = "filesystem";
+          operation = shellSemantic.operation;
+          tags.push("shell_filesystem_access", `shell_filesystem_operation:${shellSemantic.operation}`);
+        }
       }
     }
 

@@ -10,6 +10,8 @@ import { ConfigManager } from "../src/config/loader.ts";
 import { applyRuntimeOverride, type RuntimeOverride } from "../src/config/runtime_override.ts";
 import { StrategyStore } from "../src/config/strategy_store.ts";
 import { AccountPolicyEngine } from "../src/domain/services/account_policy_engine.ts";
+import type { SafeClawLocale } from "../src/i18n/locale.ts";
+import { pickLocalized, resolveSafeClawLocale } from "../src/i18n/locale.ts";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PUBLIC_DIR = path.resolve(ROOT, "admin/public");
@@ -59,6 +61,8 @@ type GlobalWithSafeClawAdmin = typeof globalThis & {
 
 type JsonRecord = Record<string, unknown>;
 
+const ADMIN_DEFAULT_LOCALE = resolveSafeClawLocale(process.env.SAFECLAW_LOCALE, "en");
+
 function sendJson(res: http.ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { "content-type": "application/json; charset=utf-8" });
   res.end(JSON.stringify(body));
@@ -67,6 +71,23 @@ function sendJson(res: http.ServerResponse, status: number, body: unknown): void
 function sendText(res: http.ServerResponse, status: number, body: string, contentType = "text/plain; charset=utf-8"): void {
   res.writeHead(status, { "content-type": contentType });
   res.end(body);
+}
+
+function localize(locale: SafeClawLocale, zhText: string, enText: string): string {
+  return pickLocalized(locale, zhText, enText);
+}
+
+function readHeaderLocale(value: string | string[] | undefined): string | undefined {
+  if (Array.isArray(value)) {
+    return value[0];
+  }
+  return value;
+}
+
+function resolveRequestLocale(req: http.IncomingMessage, url: URL): SafeClawLocale {
+  const headerLocale = readHeaderLocale(req.headers["x-safeclaw-locale"]);
+  const queryLocale = url.searchParams.get("locale") ?? url.searchParams.get("lang") ?? undefined;
+  return resolveSafeClawLocale(headerLocale ?? queryLocale, ADMIN_DEFAULT_LOCALE);
 }
 
 async function readBody(req: http.IncomingMessage): Promise<JsonRecord> {
@@ -130,6 +151,8 @@ function handleApi(
   runtime: AdminRuntime,
   strategyStore: StrategyStore,
 ): void {
+  const locale = resolveRequestLocale(req, url);
+
   if (req.method === "GET" && url.pathname === "/api/status") {
     try {
       const status = safeReadStatus(runtime.statusPath);
@@ -221,7 +244,11 @@ function handleApi(
         sendJson(res, 200, {
           ok: true,
           restart_required: false,
-          message: "策略已保存到本地 SQLite，并会在下一次安全决策时自动生效。",
+          message: localize(
+            locale,
+            "策略已保存到本地 SQLite，并会在下一次安全决策时自动生效。",
+            "Strategy has been saved to local SQLite and will apply on the next security decision.",
+          ),
           effective: {
             environment: validated.environment,
             policy_version: validated.policy_version,
@@ -253,7 +280,11 @@ function handleApi(
         sendJson(res, 200, {
           ok: true,
           restart_required: false,
-          message: "账号策略已保存到本地 SQLite，并会在下一次安全决策时自动生效。",
+          message: localize(
+            locale,
+            "账号策略已保存到本地 SQLite，并会在下一次安全决策时自动生效。",
+            "Account policies have been saved to local SQLite and will apply on the next security decision.",
+          ),
           account_policy_count: readAccountPolicies(strategyStore).length
         });
       } catch (error) {

@@ -1,4 +1,6 @@
 import type { ResourceScope } from "../../types.ts";
+import type { SafeClawLocale } from "../../i18n/locale.ts";
+import { pickLocalized } from "../../i18n/locale.ts";
 
 export class FormattingService {
   static summarizeForLog(value: unknown, maxLength: number): string {
@@ -25,12 +27,21 @@ export class FormattingService {
     resourceScope: ResourceScope,
     reasonCodes: string[],
     rules: string,
+    locale: SafeClawLocale = "en",
   ): string {
     const reasons = reasonCodes.join(", ");
     if (decision === "challenge") {
-      return `SafeClaw 已拦截敏感调用: ${toolName} (scope=${scope}, resource_scope=${resourceScope})。来源: ${decisionSource}。原因: ${reasons}。rules=${rules}。请联系管理员审批后重试。trace_id=${traceId}`;
+      return pickLocalized(
+        locale,
+        `SafeClaw 已拦截敏感调用: ${toolName} (scope=${scope}, resource_scope=${resourceScope})。来源: ${decisionSource}。原因: ${reasons}。rules=${rules}。请联系管理员审批后重试。trace_id=${traceId}`,
+        `SafeClaw paused a sensitive call: ${toolName} (scope=${scope}, resource_scope=${resourceScope}). source=${decisionSource}. reasons=${reasons}. rules=${rules}. Contact an administrator to approve and retry. trace_id=${traceId}`,
+      );
     }
-    return `SafeClaw 已阻断敏感调用: ${toolName} (scope=${scope}, resource_scope=${resourceScope})。来源: ${decisionSource}。原因: ${reasons}。rules=${rules}。如需放行，请联系安全管理员调整策略。trace_id=${traceId}`;
+    return pickLocalized(
+      locale,
+      `SafeClaw 已阻断敏感调用: ${toolName} (scope=${scope}, resource_scope=${resourceScope})。来源: ${decisionSource}。原因: ${reasons}。rules=${rules}。如需放行，请联系安全管理员调整策略。trace_id=${traceId}`,
+      `SafeClaw blocked a sensitive call: ${toolName} (scope=${scope}, resource_scope=${resourceScope}). source=${decisionSource}. reasons=${reasons}. rules=${rules}. Contact a security administrator to adjust policy. trace_id=${traceId}`,
+    );
   }
 
   static normalizeToolName(rawToolName: string): string {

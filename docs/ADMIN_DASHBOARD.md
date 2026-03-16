@@ -8,6 +8,11 @@
 - You can set `plugins.entries.safeclaw.config.adminAutoStart=false` to disable auto-start.
 
 ## Current UI Behavior
+- Locale switch:
+  - default language follows the host system locale.
+  - supports `EN` and `中文` in the dashboard header.
+  - preference is persisted in browser local storage.
+  - API save calls include `x-safeclaw-locale` so backend status messages follow UI language.
 - Metrics card: decision totals (`allow`, `warn/challenge`, `block`).
 - Recent decisions table: time, decision, source, resource scope, hook, tool, reasons.
 - Rule panel:

@@ -1,5 +1,7 @@
 import type { ApprovalRepository } from "../../domain/ports/approval_repository.ts";
 import type { ApprovalGrantMode, ApprovalService } from "../../domain/services/approval_service.ts";
+import type { SafeClawLocale } from "../../i18n/locale.ts";
+import { pickLocalized } from "../../i18n/locale.ts";
 
 export interface ApprovalCommandContext {
   channel?: string;
@@ -18,32 +20,42 @@ export interface ApprovalCommandConfig {
     from: string;
     accountId?: string;
   }>;
+  locale?: SafeClawLocale;
 }
 
 export class ApprovalCommands {
+  private locale: SafeClawLocale;
+
   constructor(
     private repository: ApprovalRepository,
     private approvalService: ApprovalService,
     private config: ApprovalCommandConfig,
-  ) {}
+  ) {
+    this.locale = config.locale ?? "en";
+  }
 
   async handleApprove(ctx: ApprovalCommandContext): Promise<{ text: string }> {
     if (!this.config.enabled) {
-      return { text: "SafeClaw 审批桥接未启用。" };
+      return { text: this.text("SafeClaw 审批桥接未启用。", "SafeClaw approval bridge is not enabled.") };
     }
     if (!ctx.isAuthorizedSender || !this.matchesApprover(ctx)) {
-      return { text: "你无权审批 SafeClaw 请求。" };
+      return { text: this.text("你无权审批 SafeClaw 请求。", "You are not allowed to approve SafeClaw requests.") };
     }
     const approvalId = this.parseApprovalId(ctx.args);
     if (!approvalId) {
-      return { text: `用法: /safeclaw-approve <approval_id> [long]` };
+      return { text: this.text("用法: /safeclaw-approve <approval_id> [long]", "Usage: /safeclaw-approve <approval_id> [long]") };
     }
     const existing = this.repository.getById(approvalId);
     if (!existing) {
-      return { text: `审批请求不存在: ${approvalId}` };
+      return { text: this.text(`审批请求不存在: ${approvalId}`, `Approval request not found: ${approvalId}`) };
     }
     if (existing.status !== "pending") {
-      return { text: `审批请求当前状态为 ${existing.status}，无法重复批准。` };
+      return {
+        text: this.text(
+          `审批请求当前状态为 ${existing.status}，无法重复批准。`,
+          `Approval request is ${existing.status}; it cannot be approved again.`,
+        ),
+      };
     }
     const grantMode = this.parseApprovalGrantMode(ctx.args);
     const grantExpiresAt = this.approvalService.resolveApprovalGrantExpiry(existing, grantMode);
@@ -54,42 +66,55 @@ export class ApprovalCommands {
       { expires_at: grantExpiresAt },
     );
     return {
-      text: `已为 ${existing.actor_id} 添加${this.formatGrantModeLabel(grantMode)}，范围=${existing.scope}，有效期至 ${this.approvalService["formatTimestampForApproval"](grantExpiresAt)}。`,
+      text: this.text(
+        `已为 ${existing.actor_id} 添加${this.formatGrantModeLabel(grantMode)}，范围=${existing.scope}，有效期至 ${this.approvalService["formatTimestampForApproval"](grantExpiresAt)}。`,
+        `${this.formatGrantModeLabel(grantMode)} granted for ${existing.actor_id}, scope=${existing.scope}, expires at ${this.approvalService["formatTimestampForApproval"](grantExpiresAt)}.`,
+      ),
     };
   }
 
   async handleReject(ctx: ApprovalCommandContext): Promise<{ text: string }> {
     if (!this.config.enabled) {
-      return { text: "SafeClaw 审批桥接未启用。" };
+      return { text: this.text("SafeClaw 审批桥接未启用。", "SafeClaw approval bridge is not enabled.") };
     }
     if (!ctx.isAuthorizedSender || !this.matchesApprover(ctx)) {
-      return { text: "你无权审批 SafeClaw 请求。" };
+      return { text: this.text("你无权审批 SafeClaw 请求。", "You are not allowed to approve SafeClaw requests.") };
     }
     const approvalId = this.parseApprovalId(ctx.args);
     if (!approvalId) {
-      return { text: `用法: /safeclaw-reject <approval_id>` };
+      return { text: this.text("用法: /safeclaw-reject <approval_id>", "Usage: /safeclaw-reject <approval_id>") };
     }
     const existing = this.repository.getById(approvalId);
     if (!existing) {
-      return { text: `审批请求不存在: ${approvalId}` };
+      return { text: this.text(`审批请求不存在: ${approvalId}`, `Approval request not found: ${approvalId}`) };
     }
     if (existing.status !== "pending") {
-      return { text: `审批请求当前状态为 ${existing.status}，无法重复拒绝。` };
+      return {
+        text: this.text(
+          `审批请求当前状态为 ${existing.status}，无法重复拒绝。`,
+          `Approval request is ${existing.status}; it cannot be rejected again.`,
+        ),
+      };
     }
     this.repository.resolve(
       approvalId,
       `${ctx.channel ?? "unknown"}:${ctx.from ?? "unknown"}`,
       "rejected",
     );
-    return { text: `已拒绝 ${approvalId}，不会为 ${existing.actor_id} 增加授权。` };
+    return {
+      text: this.text(
+        `已拒绝 ${approvalId}，不会为 ${existing.actor_id} 增加授权。`,
+        `Rejected ${approvalId}. No grant was added for ${existing.actor_id}.`,
+      ),
+    };
   }
 
   async handlePending(ctx: ApprovalCommandContext): Promise<{ text: string }> {
     if (!this.config.enabled) {
-      return { text: "SafeClaw 审批桥接未启用。" };
+      return { text: this.text("SafeClaw 审批桥接未启用。", "SafeClaw approval bridge is not enabled.") };
     }
     if (!ctx.isAuthorizedSender || !this.matchesApprover(ctx)) {
-      return { text: "你无权查看 SafeClaw 待审批请求。" };
+      return { text: this.text("你无权查看 SafeClaw 待审批请求。", "You are not allowed to view pending SafeClaw approvals.") };
     }
     return { text: this.approvalService.formatPendingApprovals(this.repository.listPending(10)) };
   }
@@ -155,6 +180,10 @@ export class ApprovalCommands {
   }
 
   private formatGrantModeLabel(mode: ApprovalGrantMode): string {
-    return mode === "longterm" ? "长期授权" : "临时授权";
+    return this.text(mode === "longterm" ? "长期授权" : "临时授权", mode === "longterm" ? "Long-lived grant" : "Temporary grant");
+  }
+
+  private text(zhText: string, enText: string): string {
+    return pickLocalized(this.locale, zhText, enText);
   }
 }

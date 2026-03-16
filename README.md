@@ -1,121 +1,127 @@
 # SafeClaw Security Plugin
 
-SafeClaw 是一个用于 OpenClaw 平台的安全插件，提供运行时策略执行、数据脱敏和审计事件功能。
+[中文文档](./README.zh-CN.md)
 
-## 特性
+SafeClaw is a runtime security plugin for [OpenClaw](https://github.com/openclaw/openclaw). It enforces policy decisions on tool calls, supports approval workflows, sanitizes sensitive outputs, and exposes audit-ready decision telemetry.
 
-- 🛡️ **运行时防护** - 基于规则的工具调用拦截
-- 🔒 **数据脱敏** - DLP 引擎自动检测和脱敏敏感数据
-- 📊 **审计事件** - 完整的安全决策事件记录
-- ✅ **审批流程** - 支持 challenge 审批和多渠道通知
-- 🔧 **可配置** - 灵活的规则配置和运行时策略覆盖
+## Why SafeClaw
 
-## 快速开始
+LLM agents can execute powerful tools. SafeClaw provides a policy guardrail layer so risky operations are either blocked, challenged for approval, or allowed with warning and traceability.
 
-### 安装
+## Core Capabilities
+
+- Runtime policy enforcement for OpenClaw hooks (`before_tool_call`, `after_tool_call`, etc.)
+- Rule-first security model (`allow`, `warn`, `challenge`, `block`)
+- Challenge approval workflow with command-based admin handling
+- Sensitive data scanning and sanitization (DLP)
+- Admin dashboard for strategy and account policy operations
+- Decision events for audit and observability
+- Built-in internationalization (`en` and `zh-CN`) for runtime/admin text
+
+## Architecture
+
+SafeClaw follows a layered architecture:
+
+- `domain`: policy, approval, context inference, formatting
+- `engine`: rule matching, decisioning, DLP scanning
+- `config`: base YAML + SQLite runtime override
+- `admin`: dashboard backend + frontend
+- `monitoring`: runtime status and decision snapshots
+
+See [Architecture](./docs/ARCHITECTURE.md) and [Technical Solution](./docs/TECHNICAL_SOLUTION.md).
+
+## Quick Start
+
+### 1. Install dependencies
 
 ```bash
 npm install
 ```
 
-### 测试
+### 2. Run verification
 
 ```bash
 npm test
 ```
 
-### 配置
-
-编辑 `config/policy.default.yaml` 来配置安全策略。
-
-## 架构
-
-SafeClaw 采用分层架构：
-
-```
-src/
-├── domain/          # 领域层（核心业务逻辑）
-├── application/     # 应用层（命令处理）
-├── infrastructure/  # 基础设施层（适配器）
-├── hooks/           # Hook 处理器
-├── engine/          # 决策引擎
-└── config/          # 配置管理
-```
-
-详见 [架构文档](docs/ARCHITECTURE.md)。
-
-## 核心组件
-
-- **ContextInferenceService** - 上下文推断（路径、工具、标签）
-- **ApprovalService** - 审批业务逻辑
-- **NotificationAdapter** - 多渠道通知（Telegram, Discord, Slack 等）
-- **RuleEngine** - 规则匹配引擎
-- **DecisionEngine** - 决策引擎
-- **DlpEngine** - 数据泄露防护
-
-## 使用示例
-
-### 推断上下文
-
-```typescript
-import { ContextInferenceService } from "./src/domain/services/context_inference_service.ts";
-
-const service = new ContextInferenceService();
-const context = service.inferResourceContext(args, workspaceDir);
-```
-
-### 处理审批
-
-```typescript
-import { ApprovalService } from "./src/domain/services/approval_service.ts";
-
-const service = new ApprovalService(repository, adapters, logger);
-await service.sendNotifications(targets, record);
-```
-
-详见 [运维手册](docs/RUNBOOK.md)。
-
-## 审批命令
-
-在管理后台把账号设为管理员（`is_admin=true`）后，管理员可以使用以下命令：
-
-- Telegram 审批通知支持快捷按钮；其他渠道可直接回复下列命令完成审批。
-
-- `/safeclaw-approve <approval_id>` - 批准审批（临时授权）
-- `/safeclaw-approve <approval_id> long` - 批准审批（长期授权）
-- `/safeclaw-reject <approval_id>` - 拒绝审批
-- `/safeclaw-pending` - 查询待审批请求
-
-## 文档
-
-- [产品需求文档](docs/PRD.md)
-- [技术方案](docs/TECHNICAL_SOLUTION.md)
-- [架构文档](docs/ARCHITECTURE.md)
-- [运维手册](docs/RUNBOOK.md)
-- [集成指南](docs/INTEGRATION_GUIDE.md)
-
-## 开发
-
-### 运行测试
-
-```bash
-npm test                # 运行所有测试
-npm run typecheck       # 类型检查
-npm run test:unit       # 单元测试
-```
-
-### 启动管理面板
+### 3. Start admin dashboard (standalone)
 
 ```bash
 npm run admin
 ```
 
-## 性能
+Default dashboard URL: `http://127.0.0.1:4780`
 
-- Hook 延迟 p95: ~5ms
-- 内存占用: ~20MB
-- 测试覆盖: 48/48 通过
+## OpenClaw Integration
 
-## 许可证
+A minimal plugin entry in `~/.openclaw/openclaw.json`:
 
-Private
+```json
+{
+  "plugins": {
+    "enabled": true,
+    "allow": ["safeclaw"],
+    "load": {
+      "paths": ["/absolute/path/to/safeclaw"]
+    },
+    "entries": {
+      "safeclaw": {
+        "enabled": true,
+        "config": {
+          "configPath": "./config/policy.default.yaml",
+          "dbPath": "./runtime/safeclaw.db",
+          "statusPath": "./runtime/safeclaw-status.json",
+          "adminAutoStart": true,
+          "adminPort": 4780
+        }
+      }
+    }
+  }
+}
+```
+
+## Approval Commands
+
+After setting one account policy with `is_admin=true`, the admin can run:
+
+- `/safeclaw-approve <approval_id>`
+- `/safeclaw-approve <approval_id> long`
+- `/safeclaw-reject <approval_id>`
+- `/safeclaw-pending`
+
+## Admin Dashboard
+
+Dashboard supports English and Chinese UI switching and stores language preference in local storage.
+By default, it follows the host system language.
+
+Main panels:
+
+- Overview: posture and trend signals
+- Decisions: recent decision events and reasons
+- Policies: grouped rule strategy controls
+- Accounts: admin approver account selection and mode settings
+
+## Documentation
+
+- [Documentation Index](./docs/README.md)
+- [OpenClaw Install Guide](./docs/OPENCLAW_INSTALL.md)
+- [Admin Dashboard](./docs/ADMIN_DASHBOARD.md)
+- [Runbook](./docs/RUNBOOK.md)
+- [Integration Guide](./docs/INTEGRATION_GUIDE.md)
+
+## Development
+
+```bash
+npm run typecheck
+npm run test:unit
+npm test
+npm run admin:build
+```
+
+## Project Status
+
+Current repository is configured as private (`"private": true` in `package.json`).
+
+## License
+
+Not declared yet.

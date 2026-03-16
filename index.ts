@@ -30,6 +30,8 @@ import { shouldAutoStartAdminServer } from "./src/admin/runtime_guard.ts";
 import { AccountPolicyEngine } from "./src/domain/services/account_policy_engine.ts";
 import { ApprovalSubjectResolver } from "./src/domain/services/approval_subject_resolver.ts";
 import { inferShellFilesystemSemantic } from "./src/domain/services/shell_filesystem_inference.ts";
+import type { SafeClawLocale } from "./src/i18n/locale.ts";
+import { localeForIntl, pickLocalized, resolveSafeClawLocale } from "./src/i18n/locale.ts";
 import type {
   AccountPolicyRecord,
   DecisionContext,
@@ -153,6 +155,21 @@ const CHANNEL_LOOKUP_ALIASES: Record<string, string[]> = {
 const getChannelPluginCompat = (OpenClawCompat as Record<string, unknown>).getChannelPlugin as
   | ((id: string) => unknown)
   | undefined;
+
+function resolveRuntimeLocale(): SafeClawLocale {
+  const systemLocale = Intl.DateTimeFormat().resolvedOptions().locale;
+  return resolveSafeClawLocale(systemLocale, "en");
+}
+
+let runtimeLocale: SafeClawLocale = resolveRuntimeLocale();
+
+function text(zhText: string, enText: string): string {
+  return pickLocalized(runtimeLocale, zhText, enText);
+}
+
+function plural(value: number, unit: "day" | "hour" | "minute"): string {
+  return `${value} ${unit}${value === 1 ? "" : "s"}`;
+}
 
 function resolveScope(ctx: { workspaceDir?: string | undefined; channelId?: string | undefined }): string {
   if (ctx.workspaceDir) {
@@ -871,51 +888,51 @@ function matchesApprover(approvers: ChatApprovalApprover[], ctx: SafeClawApprova
 
 function formatResourceScopeLabel(scope: ResourceScope): string {
   if (scope === "workspace_inside") {
-    return "工作区内";
+    return text("工作区内", "Inside workspace");
   }
   if (scope === "workspace_outside") {
-    return "工作区外";
+    return text("工作区外", "Outside workspace");
   }
   if (scope === "system") {
-    return "系统目录";
+    return text("系统目录", "System directory");
   }
-  return "无路径";
+  return text("无路径", "No path");
 }
 
 function formatApprovalPrompt(record: StoredApprovalRecord): string {
   const paths = record.resource_paths.length > 0
     ? trimText(record.resource_paths.slice(0, 3).join(" | "), 180)
-    : "未提供";
-  const rules = record.rule_ids.length > 0 ? record.rule_ids.join(", ") : "未命中具体规则";
-  const reasons = record.reason_codes.length > 0 ? record.reason_codes.join(", ") : "无附加原因";
-  const summary = record.args_summary ? trimText(record.args_summary, 220) : "无参数摘要";
+    : text("未提供", "Not provided");
+  const rules = record.rule_ids.length > 0 ? record.rule_ids.join(", ") : text("未命中具体规则", "No explicit rule matched");
+  const reasons = record.reason_codes.length > 0 ? record.reason_codes.join(", ") : text("无附加原因", "No additional reason");
+  const summary = record.args_summary ? trimText(record.args_summary, 220) : text("无参数摘要", "No argument summary");
   const temporaryExpiresAt = resolveApprovalGrantExpiry(record, "temporary");
   const longtermExpiresAt = resolveApprovalGrantExpiry(record, "longterm");
 
   return [
-    "SafeClaw 授权请求",
+    text("SafeClaw 授权请求", "SafeClaw Approval Request"),
     `ID: ${record.approval_id}`,
-    `授权对象: ${record.actor_id}`,
-    `授权范围: ${record.scope}`,
-    `最近触发工具: ${record.tool_name}`,
-    `资源范围: ${formatResourceScopeLabel(record.resource_scope)}`,
-    `路径: ${paths}`,
-    `规则: ${rules}`,
-    `原因: ${reasons}`,
-    `参数摘要: ${summary}`,
-    `待审批截至: ${formatTimestampForApproval(record.expires_at)}`,
-    `临时授权: /${APPROVAL_APPROVE_COMMAND} ${record.approval_id} (${formatApprovalGrantDuration(record, "temporary")}，有效至 ${formatTimestampForApproval(temporaryExpiresAt)})`,
-    `长期授权: /${APPROVAL_APPROVE_COMMAND} ${record.approval_id} long (${formatApprovalGrantDuration(record, "longterm")}，有效至 ${formatTimestampForApproval(longtermExpiresAt)})`,
-    `拒绝: /${APPROVAL_REJECT_COMMAND} ${record.approval_id}`,
+    `${text("授权对象", "Subject")}: ${record.actor_id}`,
+    `${text("授权范围", "Scope")}: ${record.scope}`,
+    `${text("最近触发工具", "Latest tool")}: ${record.tool_name}`,
+    `${text("资源范围", "Resource scope")}: ${formatResourceScopeLabel(record.resource_scope)}`,
+    `${text("路径", "Paths")}: ${paths}`,
+    `${text("规则", "Rules")}: ${rules}`,
+    `${text("原因", "Reasons")}: ${reasons}`,
+    `${text("参数摘要", "Arguments")}: ${summary}`,
+    `${text("待审批截至", "Approval expires at")}: ${formatTimestampForApproval(record.expires_at)}`,
+    `${text("临时授权", "Temporary grant")}: /${APPROVAL_APPROVE_COMMAND} ${record.approval_id} (${formatApprovalGrantDuration(record, "temporary")}${text("，有效至 ", ", expires at ")}${formatTimestampForApproval(temporaryExpiresAt)})`,
+    `${text("长期授权", "Long-lived grant")}: /${APPROVAL_APPROVE_COMMAND} ${record.approval_id} long (${formatApprovalGrantDuration(record, "longterm")}${text("，有效至 ", ", expires at ")}${formatTimestampForApproval(longtermExpiresAt)})`,
+    `${text("拒绝", "Reject")}: /${APPROVAL_REJECT_COMMAND} ${record.approval_id}`,
   ].join("\n");
 }
 
 function formatPendingApprovals(records: StoredApprovalRecord[]): string {
   if (records.length === 0) {
-    return "当前没有待审批请求。";
+    return text("当前没有待审批请求。", "No pending approval requests.");
   }
   return [
-    `待审批请求 ${records.length} 条:`,
+    text(`待审批请求 ${records.length} 条:`, `Pending approval requests (${records.length}):`),
     ...records.map((record) =>
       `- ${record.approval_id} | ${record.actor_id} | ${record.scope} | ${record.tool_name} | ${formatTimestampForApproval(record.requested_at)}`,
     ),
@@ -935,22 +952,22 @@ function formatDurationMs(durationMs: number): string {
   const totalHours = totalMinutes / 60;
   const totalDays = totalHours / 24;
   if (Number.isInteger(totalDays) && totalDays >= 1) {
-    return `${totalDays}天`;
+    return text(`${totalDays}天`, plural(totalDays, "day"));
   }
   if (Number.isInteger(totalHours) && totalHours >= 1) {
-    return `${totalHours}小时`;
+    return text(`${totalHours}小时`, plural(totalHours, "hour"));
   }
-  return `${totalMinutes}分钟`;
+  return text(`${totalMinutes}分钟`, plural(totalMinutes, "minute"));
 }
 
 function formatTimestampForApproval(value: string | undefined, timeZone = APPROVAL_DISPLAY_TIMEZONE): string {
   const timestamp = parseTimestampMs(value);
   if (timestamp === undefined) {
-    return value ?? "未知";
+    return value ?? text("未知", "Unknown");
   }
 
   try {
-    const parts = new Intl.DateTimeFormat("zh-CN", {
+    const parts = new Intl.DateTimeFormat(localeForIntl(runtimeLocale), {
       timeZone,
       year: "numeric",
       month: "2-digit",
@@ -1030,7 +1047,7 @@ function parseApprovalGrantMode(args: string | undefined): ApprovalGrantMode {
 }
 
 function formatGrantModeLabel(mode: ApprovalGrantMode): string {
-  return mode === "longterm" ? "长期授权" : "临时授权";
+  return text(mode === "longterm" ? "长期授权" : "临时授权", mode === "longterm" ? "Long-lived grant" : "Temporary grant");
 }
 
 function resolveApprovalGrantExpiry(record: StoredApprovalRecord, mode: ApprovalGrantMode): string {
@@ -1412,19 +1429,19 @@ async function sendApprovalNotification(
       buttons: [
         [
           {
-            text: `临时批准(${formatApprovalGrantDuration(record, "temporary")})`,
+            text: `${text("临时批准", "Approve (temp)")}(${formatApprovalGrantDuration(record, "temporary")})`,
             callback_data: `/${APPROVAL_APPROVE_COMMAND} ${record.approval_id}`,
             style: "success",
           },
           {
-            text: `长期授权(${formatApprovalGrantDuration(record, "longterm")})`,
+            text: `${text("长期授权", "Approve (long)")}(${formatApprovalGrantDuration(record, "longterm")})`,
             callback_data: `/${APPROVAL_APPROVE_COMMAND} ${record.approval_id} long`,
             style: "primary",
           },
         ],
         [
           {
-            text: "拒绝",
+            text: text("拒绝", "Reject"),
             callback_data: `/${APPROVAL_REJECT_COMMAND} ${record.approval_id}`,
             style: "danger",
           },
@@ -1648,9 +1665,18 @@ function formatApprovalBlockReason(params: {
 }): string {
   const reasons = params.reasonCodes.join(", ");
   const notifyHint = params.notificationSent
-    ? "已向管理员发送授权请求。管理员批准后，该用户在当前范围内会自动放行直到授权过期。"
-    : "未配置或未成功发送授权通知，请由管理员使用 SafeClaw 审批命令处理。";
-  return `SafeClaw 已拦截敏感调用: ${params.toolName} (scope=${params.scope}, resource_scope=${params.resourceScope})。原因: ${reasons}。rules=${params.rules}。approval_id=${params.approvalId}。${notifyHint} trace_id=${params.traceId}`;
+    ? text(
+      "已向管理员发送授权请求。管理员批准后，该用户在当前范围内会自动放行直到授权过期。",
+      "An approval request was sent to administrators. After approval, this subject is auto-allowed within the same scope until the grant expires.",
+    )
+    : text(
+      "未配置或未成功发送授权通知，请由管理员使用 SafeClaw 审批命令处理。",
+      "Approval routing is unavailable or delivery failed. Administrators must handle it with SafeClaw approval commands.",
+    );
+  return text(
+    `SafeClaw 已拦截敏感调用: ${params.toolName} (scope=${params.scope}, resource_scope=${params.resourceScope})。原因: ${reasons}。rules=${params.rules}。approval_id=${params.approvalId}。${notifyHint} trace_id=${params.traceId}`,
+    `SafeClaw paused a sensitive call: ${params.toolName} (scope=${params.scope}, resource_scope=${params.resourceScope}). reasons=${reasons}. rules=${params.rules}. approval_id=${params.approvalId}. ${notifyHint} trace_id=${params.traceId}`,
+  );
 }
 
 function parseApprovalId(args: string | undefined): string | undefined {
@@ -1884,9 +1910,15 @@ function formatToolBlockReason(
 ): string {
   const reasons = reasonCodes.join(", ");
   if (decision === "challenge") {
-    return `SafeClaw 已拦截敏感调用: ${toolName} (scope=${scope}, resource_scope=${resourceScope})。来源: ${decisionSource}。原因: ${reasons}。rules=${rules}。请联系管理员审批后重试。trace_id=${traceId}`;
+    return text(
+      `SafeClaw 已拦截敏感调用: ${toolName} (scope=${scope}, resource_scope=${resourceScope})。来源: ${decisionSource}。原因: ${reasons}。rules=${rules}。请联系管理员审批后重试。trace_id=${traceId}`,
+      `SafeClaw paused a sensitive call: ${toolName} (scope=${scope}, resource_scope=${resourceScope}). source=${decisionSource}. reasons=${reasons}. rules=${rules}. Contact an administrator to approve and retry. trace_id=${traceId}`,
+    );
   }
-  return `SafeClaw 已阻断敏感调用: ${toolName} (scope=${scope}, resource_scope=${resourceScope})。来源: ${decisionSource}。原因: ${reasons}。rules=${rules}。如需放行，请联系安全管理员调整策略。trace_id=${traceId}`;
+  return text(
+    `SafeClaw 已阻断敏感调用: ${toolName} (scope=${scope}, resource_scope=${resourceScope})。来源: ${decisionSource}。原因: ${reasons}。rules=${rules}。如需放行，请联系安全管理员调整策略。trace_id=${traceId}`,
+    `SafeClaw blocked a sensitive call: ${toolName} (scope=${scope}, resource_scope=${resourceScope}). source=${decisionSource}. reasons=${reasons}. rules=${rules}. Contact a security administrator to adjust policy. trace_id=${traceId}`,
+  );
 }
 
 const plugin = {
@@ -1896,6 +1928,7 @@ const plugin = {
   register(api: OpenClawPluginApi) {
     const resolved = resolvePluginRuntime(api);
     const pluginConfig = (api.pluginConfig ?? {}) as SafeClawPluginConfig;
+    runtimeLocale = resolveRuntimeLocale();
     const adminAutoStart = pluginConfig.adminAutoStart ?? true;
     const decisionLogMaxLength = pluginConfig.decisionLogMaxLength ?? 240;
     const statusPath = pluginConfig.statusPath
@@ -2006,21 +2039,31 @@ const plugin = {
           isAuthorizedSender: ctx.isAuthorizedSender,
         };
         if (!approvalBridge.enabled) {
-          return { text: "SafeClaw 审批桥接未启用。" };
+          return { text: text("SafeClaw 审批桥接未启用。", "SafeClaw approval bridge is not enabled.") };
         }
         if (!commandContext.isAuthorizedSender || !matchesApprover(approvalBridge.approvers, commandContext)) {
-          return { text: "你无权审批 SafeClaw 请求。" };
+          return { text: text("你无权审批 SafeClaw 请求。", "You are not allowed to approve SafeClaw requests.") };
         }
         const approvalId = parseApprovalId(commandContext.args);
         if (!approvalId) {
-          return { text: `用法: /${APPROVAL_APPROVE_COMMAND} <approval_id> [long]` };
+          return {
+            text: text(
+              `用法: /${APPROVAL_APPROVE_COMMAND} <approval_id> [long]`,
+              `Usage: /${APPROVAL_APPROVE_COMMAND} <approval_id> [long]`,
+            ),
+          };
         }
         const existing = approvalStore.getById(approvalId);
         if (!existing) {
-          return { text: `审批请求不存在: ${approvalId}` };
+          return { text: text(`审批请求不存在: ${approvalId}`, `Approval request not found: ${approvalId}`) };
         }
         if (existing.status !== "pending") {
-          return { text: `审批请求当前状态为 ${existing.status}，无法重复批准。` };
+          return {
+            text: text(
+              `审批请求当前状态为 ${existing.status}，无法重复批准。`,
+              `Approval request is ${existing.status}; it cannot be approved again.`,
+            ),
+          };
         }
         const grantMode = parseApprovalGrantMode(commandContext.args);
         const grantExpiresAt = resolveApprovalGrantExpiry(existing, grantMode);
@@ -2031,7 +2074,10 @@ const plugin = {
           { expires_at: grantExpiresAt },
         );
         return {
-          text: `已为 ${existing.actor_id} 添加${formatGrantModeLabel(grantMode)}，范围=${existing.scope}，有效期至 ${formatTimestampForApproval(grantExpiresAt)}。`,
+          text: text(
+            `已为 ${existing.actor_id} 添加${formatGrantModeLabel(grantMode)}，范围=${existing.scope}，有效期至 ${formatTimestampForApproval(grantExpiresAt)}。`,
+            `${formatGrantModeLabel(grantMode)} granted for ${existing.actor_id}, scope=${existing.scope}, expires at ${formatTimestampForApproval(grantExpiresAt)}.`,
+          ),
         };
       },
     });
@@ -2053,28 +2099,38 @@ const plugin = {
           isAuthorizedSender: ctx.isAuthorizedSender,
         };
         if (!approvalBridge.enabled) {
-          return { text: "SafeClaw 审批桥接未启用。" };
+          return { text: text("SafeClaw 审批桥接未启用。", "SafeClaw approval bridge is not enabled.") };
         }
         if (!commandContext.isAuthorizedSender || !matchesApprover(approvalBridge.approvers, commandContext)) {
-          return { text: "你无权审批 SafeClaw 请求。" };
+          return { text: text("你无权审批 SafeClaw 请求。", "You are not allowed to approve SafeClaw requests.") };
         }
         const approvalId = parseApprovalId(commandContext.args);
         if (!approvalId) {
-          return { text: `用法: /${APPROVAL_REJECT_COMMAND} <approval_id>` };
+          return { text: text(`用法: /${APPROVAL_REJECT_COMMAND} <approval_id>`, `Usage: /${APPROVAL_REJECT_COMMAND} <approval_id>`) };
         }
         const existing = approvalStore.getById(approvalId);
         if (!existing) {
-          return { text: `审批请求不存在: ${approvalId}` };
+          return { text: text(`审批请求不存在: ${approvalId}`, `Approval request not found: ${approvalId}`) };
         }
         if (existing.status !== "pending") {
-          return { text: `审批请求当前状态为 ${existing.status}，无法重复拒绝。` };
+          return {
+            text: text(
+              `审批请求当前状态为 ${existing.status}，无法重复拒绝。`,
+              `Approval request is ${existing.status}; it cannot be rejected again.`,
+            ),
+          };
         }
         approvalStore.resolve(
           approvalId,
           `${commandContext.channel ?? "unknown"}:${commandContext.from ?? "unknown"}`,
           "rejected",
         );
-        return { text: `已拒绝 ${approvalId}，不会为 ${existing.actor_id} 增加授权。` };
+        return {
+          text: text(
+            `已拒绝 ${approvalId}，不会为 ${existing.actor_id} 增加授权。`,
+            `Rejected ${approvalId}. No grant was added for ${existing.actor_id}.`,
+          ),
+        };
       },
     });
 
@@ -2095,10 +2151,15 @@ const plugin = {
           isAuthorizedSender: ctx.isAuthorizedSender,
         };
         if (!approvalBridge.enabled) {
-          return { text: "SafeClaw 审批桥接未启用。" };
+          return { text: text("SafeClaw 审批桥接未启用。", "SafeClaw approval bridge is not enabled.") };
         }
         if (!commandContext.isAuthorizedSender || !matchesApprover(approvalBridge.approvers, commandContext)) {
-          return { text: "你无权查看 SafeClaw 待审批请求。" };
+          return {
+            text: text(
+              "你无权查看 SafeClaw 待审批请求。",
+              "You are not allowed to view pending SafeClaw approvals.",
+            ),
+          };
         }
         return { text: formatPendingApprovals(approvalStore.listPending(10)) };
       },

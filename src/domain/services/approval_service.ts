@@ -3,6 +3,8 @@ import { setTimeout as sleep } from "node:timers/promises";
 import type { ApprovalRepository, StoredApprovalRecord, StoredApprovalNotification } from "../ports/approval_repository.ts";
 import type { NotificationPort, NotificationTarget } from "../ports/notification_port.ts";
 import type { OpenClawLogger } from "../ports/openclaw_adapter.ts";
+import type { SafeClawLocale } from "../../i18n/locale.ts";
+import { localeForIntl, pickLocalized } from "../../i18n/locale.ts";
 
 const APPROVAL_NOTIFICATION_MAX_ATTEMPTS = 3;
 const APPROVAL_NOTIFICATION_RETRY_DELAYS_MS = [250, 750];
@@ -23,6 +25,7 @@ export class ApprovalService {
     private repository: ApprovalRepository,
     private notificationAdapters: Map<string, NotificationPort>,
     private logger: OpenClawLogger,
+    private locale: SafeClawLocale = "en",
   ) {}
 
   async sendNotifications(
@@ -53,19 +56,19 @@ export class ApprovalService {
             buttons: [
               [
                 {
-                  text: `临时批准(${this.formatApprovalGrantDuration(record, "temporary")})`,
+                  text: `${this.text("临时批准", "Approve (temp)")}(${this.formatApprovalGrantDuration(record, "temporary")})`,
                   callback_data: `/safeclaw-approve ${record.approval_id}`,
                   style: "success",
                 },
                 {
-                  text: `长期授权(${this.formatApprovalGrantDuration(record, "longterm")})`,
+                  text: `${this.text("长期授权", "Approve (long)")}(${this.formatApprovalGrantDuration(record, "longterm")})`,
                   callback_data: `/safeclaw-approve ${record.approval_id} long`,
                   style: "primary",
                 },
               ],
               [
                 {
-                  text: "拒绝",
+                  text: this.text("拒绝", "Reject"),
                   callback_data: `/safeclaw-reject ${record.approval_id}`,
                   style: "danger",
                 },
@@ -154,17 +157,26 @@ export class ApprovalService {
   }): string {
     const reasons = params.reasonCodes.join(", ");
     const notifyHint = params.notificationSent
-      ? "已向管理员发送授权请求。管理员批准后，该用户在当前范围内会自动放行直到授权过期。"
-      : "未配置或未成功发送授权通知，请由管理员使用 SafeClaw 审批命令处理。";
-    return `SafeClaw 已拦截敏感调用: ${params.toolName} (scope=${params.scope}, resource_scope=${params.resourceScope})。原因: ${reasons}。rules=${params.rules}。approval_id=${params.approvalId}。${notifyHint} trace_id=${params.traceId}`;
+      ? this.text(
+        "已向管理员发送授权请求。管理员批准后，该用户在当前范围内会自动放行直到授权过期。",
+        "An approval request was sent to administrators. After approval, this subject is auto-allowed within the same scope until the grant expires.",
+      )
+      : this.text(
+        "未配置或未成功发送授权通知，请由管理员使用 SafeClaw 审批命令处理。",
+        "Approval routing is unavailable or delivery failed. Administrators must handle it with SafeClaw approval commands.",
+      );
+    return this.text(
+      `SafeClaw 已拦截敏感调用: ${params.toolName} (scope=${params.scope}, resource_scope=${params.resourceScope})。原因: ${reasons}。rules=${params.rules}。approval_id=${params.approvalId}。${notifyHint} trace_id=${params.traceId}`,
+      `SafeClaw paused a sensitive call: ${params.toolName} (scope=${params.scope}, resource_scope=${params.resourceScope}). reasons=${reasons}. rules=${params.rules}. approval_id=${params.approvalId}. ${notifyHint} trace_id=${params.traceId}`,
+    );
   }
 
   formatPendingApprovals(records: StoredApprovalRecord[]): string {
     if (records.length === 0) {
-      return "当前没有待审批请求。";
+      return this.text("当前没有待审批请求。", "No pending approval requests.");
     }
     return [
-      `待审批请求 ${records.length} 条:`,
+      this.text(`待审批请求 ${records.length} 条:`, `Pending approval requests (${records.length}):`),
       ...records.map((record) =>
         `- ${record.approval_id} | ${record.actor_id} | ${record.scope} | ${record.tool_name} | ${this.formatTimestampForApproval(record.requested_at)}`,
       ),
@@ -174,42 +186,42 @@ export class ApprovalService {
   private formatApprovalPrompt(record: StoredApprovalRecord): string {
     const paths = record.resource_paths.length > 0
       ? this.trimText(record.resource_paths.slice(0, 3).join(" | "), 180)
-      : "未提供";
-    const rules = record.rule_ids.length > 0 ? record.rule_ids.join(", ") : "未命中具体规则";
-    const reasons = record.reason_codes.length > 0 ? record.reason_codes.join(", ") : "无附加原因";
-    const summary = record.args_summary ? this.trimText(record.args_summary, 220) : "无参数摘要";
+      : this.text("未提供", "Not provided");
+    const rules = record.rule_ids.length > 0 ? record.rule_ids.join(", ") : this.text("未命中具体规则", "No explicit rule matched");
+    const reasons = record.reason_codes.length > 0 ? record.reason_codes.join(", ") : this.text("无附加原因", "No additional reason");
+    const summary = record.args_summary ? this.trimText(record.args_summary, 220) : this.text("无参数摘要", "No argument summary");
     const temporaryExpiresAt = this.resolveApprovalGrantExpiry(record, "temporary");
     const longtermExpiresAt = this.resolveApprovalGrantExpiry(record, "longterm");
 
     return [
-      "SafeClaw 授权请求",
+      this.text("SafeClaw 授权请求", "SafeClaw Approval Request"),
       `ID: ${record.approval_id}`,
-      `授权对象: ${record.actor_id}`,
-      `授权范围: ${record.scope}`,
-      `最近触发工具: ${record.tool_name}`,
-      `资源范围: ${this.formatResourceScopeLabel(record.resource_scope)}`,
-      `路径: ${paths}`,
-      `规则: ${rules}`,
-      `原因: ${reasons}`,
-      `参数摘要: ${summary}`,
-      `待审批截至: ${this.formatTimestampForApproval(record.expires_at)}`,
-      `临时授权: /safeclaw-approve ${record.approval_id} (${this.formatApprovalGrantDuration(record, "temporary")}，有效至 ${this.formatTimestampForApproval(temporaryExpiresAt)})`,
-      `长期授权: /safeclaw-approve ${record.approval_id} long (${this.formatApprovalGrantDuration(record, "longterm")}，有效至 ${this.formatTimestampForApproval(longtermExpiresAt)})`,
-      `拒绝: /safeclaw-reject ${record.approval_id}`,
+      `${this.text("授权对象", "Subject")}: ${record.actor_id}`,
+      `${this.text("授权范围", "Scope")}: ${record.scope}`,
+      `${this.text("最近触发工具", "Latest tool")}: ${record.tool_name}`,
+      `${this.text("资源范围", "Resource scope")}: ${this.formatResourceScopeLabel(record.resource_scope)}`,
+      `${this.text("路径", "Paths")}: ${paths}`,
+      `${this.text("规则", "Rules")}: ${rules}`,
+      `${this.text("原因", "Reasons")}: ${reasons}`,
+      `${this.text("参数摘要", "Arguments")}: ${summary}`,
+      `${this.text("待审批截至", "Approval expires at")}: ${this.formatTimestampForApproval(record.expires_at)}`,
+      `${this.text("临时授权", "Temporary grant")}: /safeclaw-approve ${record.approval_id} (${this.formatApprovalGrantDuration(record, "temporary")}${this.text("，有效至 ", ", expires at ")}${this.formatTimestampForApproval(temporaryExpiresAt)})`,
+      `${this.text("长期授权", "Long-lived grant")}: /safeclaw-approve ${record.approval_id} long (${this.formatApprovalGrantDuration(record, "longterm")}${this.text("，有效至 ", ", expires at ")}${this.formatTimestampForApproval(longtermExpiresAt)})`,
+      `${this.text("拒绝", "Reject")}: /safeclaw-reject ${record.approval_id}`,
     ].join("\n");
   }
 
   private formatResourceScopeLabel(scope: string): string {
     if (scope === "workspace_inside") {
-      return "工作区内";
+      return this.text("工作区内", "Inside workspace");
     }
     if (scope === "workspace_outside") {
-      return "工作区外";
+      return this.text("工作区外", "Outside workspace");
     }
     if (scope === "system") {
-      return "系统目录";
+      return this.text("系统目录", "System directory");
     }
-    return "无路径";
+    return this.text("无路径", "No path");
   }
 
   private formatApprovalGrantDuration(record: StoredApprovalRecord, mode: ApprovalGrantMode): string {
@@ -229,22 +241,22 @@ export class ApprovalService {
     const totalHours = totalMinutes / 60;
     const totalDays = totalHours / 24;
     if (Number.isInteger(totalDays) && totalDays >= 1) {
-      return `${totalDays}天`;
+      return this.text(`${totalDays}天`, this.plural(totalDays, "day"));
     }
     if (Number.isInteger(totalHours) && totalHours >= 1) {
-      return `${totalHours}小时`;
+      return this.text(`${totalHours}小时`, this.plural(totalHours, "hour"));
     }
-    return `${totalMinutes}分钟`;
+    return this.text(`${totalMinutes}分钟`, this.plural(totalMinutes, "minute"));
   }
 
   private formatTimestampForApproval(value: string | undefined, timeZone = APPROVAL_DISPLAY_TIMEZONE): string {
     const timestamp = this.parseTimestampMs(value);
     if (timestamp === undefined) {
-      return value ?? "未知";
+      return value ?? this.text("未知", "Unknown");
     }
 
     try {
-      const parts = new Intl.DateTimeFormat("zh-CN", {
+      const parts = new Intl.DateTimeFormat(localeForIntl(this.locale), {
         timeZone,
         year: "numeric",
         month: "2-digit",
@@ -279,5 +291,13 @@ export class ApprovalService {
       return value;
     }
     return `${value.slice(0, Math.max(0, maxLength - 3))}...`;
+  }
+
+  private text(zhText: string, enText: string): string {
+    return pickLocalized(this.locale, zhText, enText);
+  }
+
+  private plural(value: number, unit: "day" | "hour" | "minute"): string {
+    return `${value} ${unit}${value === 1 ? "" : "s"}`;
   }
 }

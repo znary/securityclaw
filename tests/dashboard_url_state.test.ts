@@ -57,11 +57,11 @@ test("dashboard search builder keeps unrelated params and drops default view sta
   assert.equal(
     buildAdminDashboardSearch({
       currentSearch: "?theme=dark&locale=zh-CN&tab=events&decision=challenge&page=2",
-      tab: "rules",
+      tab: "skills",
       decisionFilter: "challenge",
       decisionPage: 2,
     }),
-    "?theme=dark&locale=zh-CN&tab=rules&decision=challenge",
+    "?theme=dark&locale=zh-CN&tab=skills&decision=challenge",
   );
 });
 

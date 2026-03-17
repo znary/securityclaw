@@ -22,6 +22,10 @@
   - new user-facing text should reuse the existing locale path instead of hardcoded single-language copy.
   - new visual states should be built on shared theme tokens so charts, tables, badges, toolbars, and status states remain readable in both themes.
 - Metrics card: decision totals (`allow`, `warn/challenge`, `block`).
+- Overview skill snapshot:
+  - overview now includes a compact `Skill Interception` summary card.
+  - the card shows discovered skills, high/critical counts, 24h `challenge/block`, undeclared-change alerts, quarantine counts, and top-priority skill highlights.
+  - highlighted skills can jump directly into the dedicated skill panel.
 - Recent decisions table: time, decision, source, resource scope, hook, tool, reasons.
 - Rule panel:
   - rules are grouped by `group` (for example `filesystem`, `email`, `album`).
@@ -38,6 +42,12 @@
   - admin account selection is single-choice; at most one account can be admin at the same time.
   - this mapping does not write back to `~/.openclaw/openclaw.json`.
   - all channels can use command approvals; Telegram also shows quick action buttons in approval notifications.
+- Skill interception panel:
+  - dashboard discovers installed skills from local OpenClaw/Codex skill roots and stores scan results in SQLite.
+  - list view supports filtering by risk tier, state, source, undeclared-change status, and recent intercept activity.
+  - detail view shows risk score, findings, recent activity, install path, and current content hash.
+  - admin actions include `rescan`, `quarantine`, and time-bound `trust override`.
+  - policy section edits score thresholds, risk-by-severity matrix, and default handling for unscanned or changed-without-version-update skills.
 
 ## Strategy Configuration
 - The panel writes overrides to SQLite (`runtime/safeclaw.db`) via `PUT /api/strategy`.
@@ -68,6 +78,7 @@
 ## Runtime Status
 - Data source: `runtime/safeclaw-status.json` via `GET /api/status`.
 - Shows totals and recent decisions with simplified labels.
+- Skill interception status uses SQLite-backed APIs (`/api/skills/status`, `/api/skills`, `/api/skills/:skillId`, `/api/skills/policy`).
 
 ## Notes
 - Override updates are validated against SafeClaw config schema before saving.

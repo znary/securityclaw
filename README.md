@@ -98,9 +98,10 @@ By default, it follows the host system language.
 
 Main panels:
 
-- Overview: posture and trend signals
+- Overview: posture and trend signals, plus a skill-risk snapshot for high-priority installed skills
 - Decisions: recent decision events and reasons
 - Policies: grouped rule strategy controls plus sensitive-path registry management
+- Skill Interception: installed skill inventory, risk scoring, undeclared-change detection, rescan/quarantine/trust override actions, and interception policy matrix
 - Accounts: admin approver account selection and mode settings
 
 Sensitive path registry behavior:
@@ -108,6 +109,13 @@ Sensitive path registry behavior:
 - Built-in path patterns cover credentials, personal content, download staging, browser profiles, browser secret stores, and communication stores.
 - Registry entries are persisted in SQLite runtime strategy overrides together with rule decisions.
 - Built-in entries can be disabled from the dashboard, and custom path rules can be added without editing the base YAML.
+
+Skill interception behavior:
+
+- Dashboard discovers installed skills from local OpenClaw / Codex skill roots and stores scan results in SQLite.
+- A skill can be flagged when its content changes without a matching version update.
+- Overview surfaces the most important skill signals directly so admins can see high-risk items without switching tabs.
+- The dedicated Skill Interception panel supports rescan, quarantine, temporary trust override, and risk-matrix editing.
 
 ## Documentation
 

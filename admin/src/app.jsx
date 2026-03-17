@@ -114,6 +114,9 @@ const TAB_ITEMS = [
     id: "rules"
   },
   {
+    id: "skills"
+  },
+  {
     id: "accounts"
   }
 ];
@@ -122,6 +125,7 @@ function tabLabel(tabId) {
   if (tabId === "overview") return ui("概览", "Overview");
   if (tabId === "events") return ui("决策记录", "Decisions");
   if (tabId === "rules") return ui("规则策略", "Policies");
+  if (tabId === "skills") return ui("Skill 拦截", "Skill Interception");
   if (tabId === "accounts") return ui("账号策略", "Accounts");
   return tabId;
 }
@@ -199,6 +203,74 @@ const SEVERITY_TEXT = {
   high: { "zh-CN": "高风险", en: "High" },
   critical: { "zh-CN": "严重", en: "Critical" }
 };
+
+const SKILL_RISK_TIER_TEXT = {
+  low: { "zh-CN": "低风险", en: "Low" },
+  medium: { "zh-CN": "中风险", en: "Medium" },
+  high: { "zh-CN": "高风险", en: "High" },
+  critical: { "zh-CN": "严重风险", en: "Critical" }
+};
+
+const SKILL_STATE_TEXT = {
+  normal: { "zh-CN": "正常", en: "Normal" },
+  quarantined: { "zh-CN": "已隔离", en: "Quarantined" },
+  trusted: { "zh-CN": "受信覆盖", en: "Trust Override" }
+};
+
+const SKILL_SCAN_STATUS_TEXT = {
+  ready: { "zh-CN": "已就绪", en: "Ready" },
+  stale: { "zh-CN": "已过期", en: "Stale" },
+  unknown: { "zh-CN": "未扫描", en: "Unscanned" }
+};
+
+const SKILL_SOURCE_TEXT = {
+  openclaw_workspace: { "zh-CN": "OpenClaw 工作区", en: "OpenClaw Workspace" },
+  openclaw_home: { "zh-CN": "OpenClaw 本地目录", en: "OpenClaw Home" },
+  codex_home: { "zh-CN": "Codex 技能目录", en: "Codex Home" },
+  custom: { "zh-CN": "自定义来源", en: "Custom Source" }
+};
+
+const SKILL_SEVERITY_TEXT = {
+  S0: { "zh-CN": "S0 低敏读取", en: "S0 Low-Sensitivity Read" },
+  S1: { "zh-CN": "S1 普通写入 / 公网请求", en: "S1 Standard Write / Network" },
+  S2: { "zh-CN": "S2 越界读写 / 敏感读取", en: "S2 Sensitive / Outside Workspace" },
+  S3: { "zh-CN": "S3 执行 / 敏感外发", en: "S3 Execution / Sensitive Egress" }
+};
+
+const SKILL_REASON_TEXT = {
+  SKILL_CONTENT_UNREADABLE: { "zh-CN": "内容不可读", en: "Content Unreadable" },
+  SKILL_MISSING_AUTHOR: { "zh-CN": "缺少作者信息", en: "Missing Author" },
+  SKILL_MISSING_VERSION: { "zh-CN": "缺少版本信息", en: "Missing Version" },
+  SKILL_CHANGELOG_MISSING: { "zh-CN": "缺少变更说明", en: "Missing Changelog" },
+  SKILL_DOWNLOAD_EXECUTE_PATTERN: { "zh-CN": "检测到下载后执行模式", en: "Download-and-Execute Pattern" },
+  SKILL_CAPABILITY_SHELL_EXEC: { "zh-CN": "包含执行能力", en: "Shell Execution Capability" },
+  SKILL_POLICY_BYPASS_LANGUAGE: { "zh-CN": "存在绕过策略语义", en: "Policy Bypass Language" },
+  SKILL_CREDENTIAL_TARGETING: { "zh-CN": "命中凭据 / 令牌目标", en: "Credential Targeting" },
+  SKILL_PUBLIC_EGRESS_PATTERN: { "zh-CN": "存在公网外发语义", en: "Public Egress Pattern" },
+  SKILL_OUTSIDE_WORKSPACE_WRITE: { "zh-CN": "涉及工作区外变更", en: "Outside-Workspace Change" },
+  SKILL_CAPABILITY_COMBINATION: { "zh-CN": "高危能力组合", en: "High-Risk Capability Combination" },
+  SKILL_TYPOSQUAT_SUSPECTED: { "zh-CN": "疑似相似名伪装", en: "Possible Typosquat" },
+  SKILL_DRIFT_DETECTED: { "zh-CN": "内容变了但版本没变", en: "Changed Without Version Update" },
+  SKILL_TRUST_OVERRIDE_APPLIED: { "zh-CN": "受信覆盖已应用", en: "Trust Override Applied" },
+  SKILL_QUARANTINE_OVERRIDE: { "zh-CN": "隔离状态变更", en: "Quarantine Changed" }
+};
+
+const SKILL_ACTIVITY_TEXT = {
+  finding: { "zh-CN": "扫描信号", en: "Scan Signal" },
+  rescan: { "zh-CN": "人工重扫", en: "Manual Rescan" },
+  drift_detected: { "zh-CN": "发现未声明变更", en: "Undeclared Change Detected" },
+  quarantine_on: { "zh-CN": "已隔离", en: "Quarantined" },
+  quarantine_off: { "zh-CN": "解除隔离", en: "Quarantine Removed" },
+  trust_override_on: { "zh-CN": "设为受信", en: "Trust Override On" },
+  trust_override_off: { "zh-CN": "撤销受信", en: "Trust Override Removed" }
+};
+
+const SKILL_RISK_FILTER_OPTIONS = ["all", "low", "medium", "high", "critical"];
+const SKILL_STATE_FILTER_OPTIONS = ["all", "normal", "quarantined", "trusted"];
+const SKILL_DRIFT_FILTER_OPTIONS = ["all", "drifted", "steady"];
+const SKILL_INTERCEPT_FILTER_OPTIONS = ["all", "recent"];
+const SKILL_POLICY_TIERS = ["low", "medium", "high", "critical", "unknown"];
+const SKILL_SEVERITY_LEVELS = ["S0", "S1", "S2", "S3"];
 
 const CONTROL_DOMAIN_SECURITY_GAIN_TEXT = {
   execution_control: "降低误执行高危命令、系统损坏和被植入后门的风险。",
@@ -1142,6 +1214,99 @@ function buildDecisionApiPath(decisionFilter, decisionPage) {
   return `/api/decisions?${searchParams.toString()}`;
 }
 
+function skillRiskLabel(value) {
+  return readLocalized(SKILL_RISK_TIER_TEXT, value, value || "-");
+}
+
+function skillStateLabel(value) {
+  return readLocalized(SKILL_STATE_TEXT, value, value || "-");
+}
+
+function skillScanStatusLabel(value) {
+  return readLocalized(SKILL_SCAN_STATUS_TEXT, value, value || "-");
+}
+
+function skillSourceLabel(value, detail) {
+  const source = readLocalized(SKILL_SOURCE_TEXT, value, value || ui("未知来源", "Unknown Source"));
+  return detail ? `${source} · ${detail}` : source;
+}
+
+function skillSeverityLabel(value) {
+  return readLocalized(SKILL_SEVERITY_TEXT, value, value || "-");
+}
+
+function skillReasonLabel(value) {
+  return readLocalized(SKILL_REASON_TEXT, value, value || "-");
+}
+
+function skillActivityLabel(value) {
+  return readLocalized(SKILL_ACTIVITY_TEXT, value, value || "-");
+}
+
+function skillRiskFilterLabel(value) {
+  if (value === "all") return ui("全部风险", "All Risk Tiers");
+  return skillRiskLabel(value);
+}
+
+function skillStateFilterLabel(value) {
+  if (value === "all") return ui("全部状态", "All States");
+  return skillStateLabel(value);
+}
+
+function skillDriftFilterLabel(value) {
+  if (value === "all") return ui("全部变更状态", "All Change States");
+  if (value === "drifted") return ui("仅看未声明变更", "Changed Without Version Update");
+  return ui("无未声明变更", "No Undeclared Change");
+}
+
+function skillInterceptFilterLabel(value) {
+  if (value === "all") return ui("全部拦截状态", "All Interception States");
+  return ui("24 小时内有需确认 / 拦截", "Challenge / Block in Last 24h");
+}
+
+function normalizeSkillPolicyDraft(policy) {
+  if (!policy || typeof policy !== "object") {
+    return null;
+  }
+  return clone(policy);
+}
+
+function buildSkillListApiPath(filters) {
+  const searchParams = new URLSearchParams();
+  if (filters?.risk && filters.risk !== "all") {
+    searchParams.set("risk", filters.risk);
+  }
+  if (filters?.state && filters.state !== "all") {
+    searchParams.set("state", filters.state);
+  }
+  if (filters?.source && filters.source !== "all") {
+    searchParams.set("source", filters.source);
+  }
+  if (filters?.drift && filters.drift !== "all") {
+    searchParams.set("drift", filters.drift);
+  }
+  if (filters?.intercepted && filters.intercepted !== "all") {
+    searchParams.set("intercepted", filters.intercepted);
+  }
+  const query = searchParams.toString();
+  return query ? `/api/skills?${query}` : "/api/skills";
+}
+
+function formatHash(value, length = 10) {
+  if (typeof value !== "string" || !value.trim()) {
+    return "-";
+  }
+  return value.length > length ? `${value.slice(0, length)}…` : value;
+}
+
+function formatConfidence(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return "0%";
+  }
+  return `${Math.round(numeric * 100)}%`;
+}
+
 function trimLabel(value, max = 10) {
   if (typeof value !== "string") {
     return "";
@@ -1274,6 +1439,22 @@ function App() {
   const [publishedAccountPolicies, setPublishedAccountPolicies] = useState([]);
   const [availableSessions, setAvailableSessions] = useState([]);
   const [selectedSessionSubject, setSelectedSessionSubject] = useState("");
+  const [skillStatusPayload, setSkillStatusPayload] = useState(null);
+  const [skillListPayload, setSkillListPayload] = useState(null);
+  const [skillDetailPayload, setSkillDetailPayload] = useState(null);
+  const [skillPolicy, setSkillPolicy] = useState(null);
+  const [publishedSkillPolicy, setPublishedSkillPolicy] = useState(null);
+  const [skillRiskFilter, setSkillRiskFilter] = useState("all");
+  const [skillStateFilter, setSkillStateFilter] = useState("all");
+  const [skillSourceFilter, setSkillSourceFilter] = useState("all");
+  const [skillDriftFilter, setSkillDriftFilter] = useState("all");
+  const [skillInterceptFilter, setSkillInterceptFilter] = useState("all");
+  const [selectedSkillId, setSelectedSkillId] = useState("");
+  const [skillListLoading, setSkillListLoading] = useState(true);
+  const [skillDetailLoading, setSkillDetailLoading] = useState(false);
+  const [skillPolicySaving, setSkillPolicySaving] = useState(false);
+  const [skillActionLoading, setSkillActionLoading] = useState("");
+  const [skillConfirmAction, setSkillConfirmAction] = useState(null);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -1302,7 +1483,12 @@ function App() {
       JSON.stringify(canonicalizeAccountPolicies(publishedAccountPolicies)),
     [accountPolicies, publishedAccountPolicies]
   );
+  const hasPendingSkillPolicyChanges = useMemo(
+    () => JSON.stringify(skillPolicy || null) !== JSON.stringify(publishedSkillPolicy || null),
+    [publishedSkillPolicy, skillPolicy]
+  );
   const hasPendingChanges = hasPendingRuleChanges || hasPendingFileRuleChanges || hasPendingAccountChanges;
+  const hasPendingDashboardChanges = hasPendingChanges || hasPendingSkillPolicyChanges;
   const groupedPolicies = useMemo(() => {
     const groups = new Map();
     policies.forEach((policy, index) => {
@@ -1337,6 +1523,25 @@ function App() {
     const selectedKey = normalizeDirectoryPathKey(selectedFileDirectory);
     return normalizedFileRules.some((rule) => normalizeDirectoryPathKey(rule.directory) === selectedKey);
   }, [normalizedFileRules, selectedFileDirectory]);
+  const skillItems = useMemo(() => toArray(skillListPayload?.items), [skillListPayload]);
+  const skillSourceOptions = useMemo(() => toArray(skillListPayload?.source_options), [skillListPayload]);
+  const skillOverviewHighlights = useMemo(() => toArray(skillStatusPayload?.highlights), [skillStatusPayload]);
+  const skillSummaryCounts = skillListPayload?.counts || {
+    total: 0,
+    high_critical: 0,
+    quarantined: 0,
+    trusted: 0,
+    drifted: 0,
+    recent_intercepts: 0
+  };
+  const skillOverviewStats = skillStatusPayload?.stats || {
+    total: 0,
+    high_critical: 0,
+    challenge_block_24h: 0,
+    drift_alerts: 0,
+    quarantined: 0,
+    trusted_overrides: 0
+  };
   const firstRuleKey = policyEntries[0]?.key || "";
 
   useEffect(() => {
@@ -1497,6 +1702,64 @@ function App() {
     }
   }, [decisionFilter, decisionPage]);
 
+  const loadSkillData = useCallback(async (options = {}) => {
+    const {
+      silent = false,
+      syncPolicy = true
+    } = options;
+    if (!silent) {
+      setSkillListLoading(true);
+    }
+    try {
+      const [status, list] = await Promise.all([
+        getJson("/api/skills/status"),
+        getJson(
+          buildSkillListApiPath({
+            risk: skillRiskFilter,
+            state: skillStateFilter,
+            source: skillSourceFilter,
+            drift: skillDriftFilter,
+            intercepted: skillInterceptFilter
+          })
+        )
+      ]);
+      const nextPolicy = normalizeSkillPolicyDraft(status?.policy || list?.policy);
+      setSkillStatusPayload(status);
+      setSkillListPayload(list);
+      if (nextPolicy) {
+        setPublishedSkillPolicy(nextPolicy);
+        if (syncPolicy) {
+          setSkillPolicy(clone(nextPolicy));
+        } else {
+          setSkillPolicy((current) => current || clone(nextPolicy));
+        }
+      }
+    } catch (loadError) {
+      setError(String(loadError));
+    } finally {
+      setSkillListLoading(false);
+    }
+  }, [skillDriftFilter, skillInterceptFilter, skillRiskFilter, skillSourceFilter, skillStateFilter]);
+
+  const loadSkillDetail = useCallback(async (skillId, options = {}) => {
+    const { silent = false } = options;
+    if (!skillId) {
+      setSkillDetailPayload(null);
+      return;
+    }
+    if (!silent) {
+      setSkillDetailLoading(true);
+    }
+    try {
+      const payload = await getJson(`/api/skills/${encodeURIComponent(skillId)}`);
+      setSkillDetailPayload(payload);
+    } catch (loadError) {
+      setError(String(loadError));
+    } finally {
+      setSkillDetailLoading(false);
+    }
+  }, []);
+
   const loadDirectoryPicker = useCallback(async (targetPath = "") => {
     setFilePickerLoading(true);
     setFilePickerError("");
@@ -1531,11 +1794,42 @@ function App() {
   }, [loadDecisionPage]);
 
   useEffect(() => {
-    if (!filePickerOpen && !fileRuleDeleteTarget) {
+    void loadSkillData({
+      silent: false,
+      syncPolicy: !hasPendingSkillPolicyChanges
+    });
+  }, [hasPendingSkillPolicyChanges, loadSkillData]);
+
+  useEffect(() => {
+    if (skillItems.length === 0) {
+      setSelectedSkillId("");
+      setSkillDetailPayload(null);
+      return;
+    }
+    const selectedStillExists = skillItems.some((item) => item.skill_id === selectedSkillId);
+    if (!selectedStillExists) {
+      setSelectedSkillId(skillItems[0].skill_id);
+    }
+  }, [selectedSkillId, skillItems]);
+
+  useEffect(() => {
+    if (!selectedSkillId) {
+      setSkillDetailPayload(null);
+      return;
+    }
+    void loadSkillDetail(selectedSkillId, { silent: activeTab !== "skills" });
+  }, [activeTab, loadSkillDetail, selectedSkillId]);
+
+  useEffect(() => {
+    if (!filePickerOpen && !fileRuleDeleteTarget && !skillConfirmAction) {
       return undefined;
     }
     const onKeyDown = (event) => {
       if (event.key === "Escape") {
+        if (skillConfirmAction) {
+          setSkillConfirmAction(null);
+          return;
+        }
         if (fileRuleDeleteTarget) {
           setFileRuleDeleteTarget("");
           return;
@@ -1545,18 +1839,32 @@ function App() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [filePickerOpen, fileRuleDeleteTarget]);
+  }, [filePickerOpen, fileRuleDeleteTarget, skillConfirmAction]);
 
   useEffect(() => {
-    if (hasPendingChanges || saving) {
+    if (hasPendingDashboardChanges || saving || skillPolicySaving || skillActionLoading) {
       return undefined;
     }
     const timer = setInterval(() => {
       void loadData({ syncRules: true, syncAccounts: true, silent: true });
       void loadDecisionPage({ silent: true });
+      void loadSkillData({ silent: true, syncPolicy: true });
+      if (selectedSkillId) {
+        void loadSkillDetail(selectedSkillId, { silent: true });
+      }
     }, REFRESH_INTERVAL_MS);
     return () => clearInterval(timer);
-  }, [hasPendingChanges, loadData, loadDecisionPage, saving]);
+  }, [
+    hasPendingDashboardChanges,
+    loadData,
+    loadDecisionPage,
+    loadSkillData,
+    loadSkillDetail,
+    saving,
+    selectedSkillId,
+    skillActionLoading,
+    skillPolicySaving
+  ]);
 
   const decisions = toArray(statusPayload?.status?.recent_decisions);
   const decisionCounts = decisionPayload?.counts || {
@@ -1754,6 +2062,77 @@ function App() {
     }
   }, [loadData]);
 
+  const saveSkillPolicyChanges = useCallback(async () => {
+    if (!skillPolicy) {
+      return;
+    }
+    setSkillPolicySaving(true);
+    setError("");
+    setMessage(ui("Skill 拦截策略保存中...", "Saving skill interception policy..."));
+    try {
+      const response = await fetch("/api/skills/policy", {
+        method: "PUT",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json",
+          "x-safeclaw-locale": activeLocale
+        },
+        body: JSON.stringify(skillPolicy)
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(getJsonError(payload, ui("保存失败", "Save failed")));
+      }
+      const nextPolicy = normalizeSkillPolicyDraft(payload?.policy);
+      if (nextPolicy) {
+        setPublishedSkillPolicy(clone(nextPolicy));
+        setSkillPolicy(clone(nextPolicy));
+      }
+      setMessage(payload?.message || ui("Skill 拦截策略已保存。", "Skill interception policy saved."));
+      await loadSkillData({ silent: true, syncPolicy: true });
+      if (selectedSkillId) {
+        await loadSkillDetail(selectedSkillId, { silent: true });
+      }
+    } catch (saveError) {
+      setError(String(saveError));
+      setMessage("");
+    } finally {
+      setSkillPolicySaving(false);
+    }
+  }, [loadSkillData, loadSkillDetail, selectedSkillId, skillPolicy]);
+
+  const runSkillAction = useCallback(async (skillId, action, body = {}) => {
+    setSkillActionLoading(`${action}:${skillId}`);
+    setError("");
+    try {
+      const response = await fetch(`/api/skills/${encodeURIComponent(skillId)}/${action}`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json",
+          "x-safeclaw-locale": activeLocale
+        },
+        body: JSON.stringify(body)
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(getJsonError(payload, ui("操作失败", "Action failed")));
+      }
+      setMessage(payload?.message || ui("Skill 状态已更新。", "Skill status updated."));
+      if (payload?.detail) {
+        setSkillDetailPayload(payload.detail);
+      } else if (selectedSkillId === skillId) {
+        await loadSkillDetail(skillId, { silent: true });
+      }
+      await loadSkillData({ silent: true, syncPolicy: false });
+    } catch (actionError) {
+      setError(String(actionError));
+      setMessage("");
+    } finally {
+      setSkillActionLoading("");
+    }
+  }, [loadSkillData, loadSkillDetail, selectedSkillId]);
+
   useEffect(() => {
     if (loading || saving || (!hasPendingRuleChanges && !hasPendingFileRuleChanges)) {
       return undefined;
@@ -1840,6 +2219,13 @@ function App() {
     });
   }
 
+  function openSkillWorkspace(skillId = "") {
+    if (skillId) {
+      setSelectedSkillId(skillId);
+    }
+    switchTab("skills");
+  }
+
   function openDecisionRecords(filterId) {
     navigateDashboard({
       tab: "events",
@@ -1854,6 +2240,96 @@ function App() {
       decisionFilter: filterId,
       decisionPage: 1
     });
+  }
+
+  function updateSkillPolicyDraft(mutator) {
+    setSkillPolicy((current) => {
+      const next = normalizeSkillPolicyDraft(current);
+      if (!next) {
+        return current;
+      }
+      mutator(next);
+      return next;
+    });
+  }
+
+  function updateSkillThreshold(field, value) {
+    updateSkillPolicyDraft((next) => {
+      next.thresholds[field] = Number(value);
+    });
+  }
+
+  function updateSkillMatrixDecision(tier, severity, decision) {
+    updateSkillPolicyDraft((next) => {
+      next.matrix[tier][severity] = decision;
+    });
+  }
+
+  function updateSkillDefaultAction(key, value) {
+    updateSkillPolicyDraft((next) => {
+      if (key === "drifted_action") {
+        next.defaults.drifted_action = value;
+        return;
+      }
+      if (key === "trust_override_hours") {
+        next.defaults.trust_override_hours = Number(value);
+        return;
+      }
+      if (key === "unscanned_S2") {
+        next.defaults.unscanned.S2 = value;
+        return;
+      }
+      if (key === "unscanned_S3") {
+        next.defaults.unscanned.S3 = value;
+      }
+    });
+  }
+
+  function resetSkillPolicyDraft() {
+    setSkillPolicy(normalizeSkillPolicyDraft(publishedSkillPolicy));
+  }
+
+  function triggerSkillRescan(skillId) {
+    void runSkillAction(skillId, "rescan");
+  }
+
+  function requestSkillConfirm(kind, skill, enable) {
+    if (!skill?.skill_id) {
+      return;
+    }
+    setSkillConfirmAction({
+      kind,
+      skillId: skill.skill_id,
+      enable,
+      skillName: skill.name
+    });
+  }
+
+  function cancelSkillConfirmAction() {
+    setSkillConfirmAction(null);
+  }
+
+  function confirmSkillAction() {
+    if (!skillConfirmAction?.skillId) {
+      return;
+    }
+    const targetSkillId = skillConfirmAction.skillId;
+    if (skillConfirmAction.kind === "quarantine") {
+      void runSkillAction(targetSkillId, "quarantine", {
+        quarantined: Boolean(skillConfirmAction.enable),
+        updated_by: "admin-ui"
+      });
+      setSkillConfirmAction(null);
+      return;
+    }
+    if (skillConfirmAction.kind === "trust") {
+      void runSkillAction(targetSkillId, "trust-override", {
+        enabled: Boolean(skillConfirmAction.enable),
+        updated_by: "admin-ui",
+        hours: Number(skillPolicy?.defaults?.trust_override_hours || 6)
+      });
+      setSkillConfirmAction(null);
+    }
   }
 
   function onDecisionChange(index, decision) {
@@ -2011,10 +2487,14 @@ function App() {
     setFilePickerError("");
   }
 
+  const selectedSkill = skillDetailPayload?.skill || skillItems.find((item) => item.skill_id === selectedSkillId) || null;
+  const selectedSkillFindings = toArray(skillDetailPayload?.findings || selectedSkill?.findings);
+  const selectedSkillActivity = toArray(skillDetailPayload?.activity);
   const tabCounts = {
     overview: stats.total,
     events: stats.total,
     rules: policies.length,
+    skills: skillOverviewStats.total,
     accounts: accountPolicies.length
   };
   const recentBlockCount = decisions.filter((item) => item.decision === "block").length;
@@ -2030,10 +2510,24 @@ function App() {
   const postureDescription = latestDecision
     ? `${decisionLabel(latestDecision.decision)} · ${latestDecision.tool || ui("未知操作", "Unknown operation")} · ${resourceScopeLabel(latestDecision.resource_scope)}`
     : ui("等待新的运行数据进入控制台。", "Waiting for new runtime data.");
-  const statusTone = error ? "error" : hasPendingChanges || saving ? "warn" : "good";
+  const skillPostureTitle = skillOverviewStats.high_critical > 0
+    ? ui("Skill 风险面正在重点关注高风险对象", "Skill posture is focused on high-risk items")
+    : skillOverviewStats.challenge_block_24h > 0
+      ? ui("Skill 扫描整体平稳，但仍有近期拦截活动", "Skill posture is stable overall with recent interceptions")
+      : ui("Skill 库整体稳定，当前没有明显高风险对象", "Skill library is stable with no obvious high-risk items");
+  const skillPostureDescription = skillOverviewHighlights[0]
+    ? `${skillOverviewHighlights[0].name} · ${skillRiskLabel(skillOverviewHighlights[0].risk_tier)} · ${ui("风险分", "Risk")} ${skillOverviewHighlights[0].risk_score}`
+    : ui("等待扫描目录中的 Skill 清单同步到概览。", "Waiting for installed skills to sync into overview.");
+  const statusTone = error
+    ? "error"
+    : hasPendingDashboardChanges || saving || skillPolicySaving
+      ? "warn"
+      : "good";
   const statusMessage = error || message || (hasPendingChanges
     ? ui("检测到策略变更，正在自动保存...", "Strategy changes detected. Saving automatically...")
-    : "");
+    : hasPendingSkillPolicyChanges
+      ? ui("Skill 拦截策略有未保存修改。", "Skill interception policy has unsaved changes.")
+      : "");
   const shouldShowStatus = Boolean(statusMessage);
   const activeRuleEntry = policyEntries.find((entry) => entry.key === activeRuleKey) || null;
   const activeRuleGuide = activeRuleEntry ? ruleImpactGuide(activeRuleEntry.policy, activeRuleEntry.index) : null;
@@ -2153,9 +2647,9 @@ function App() {
             <div className="card-head">
               <h2>{ui("概览", "Overview")}</h2>
             </div>
-            <div className="overview-grid">
-              <div className="panel-card">
-                <div className="stats">
+	            <div className="overview-grid">
+	              <div className="panel-card">
+	                <div className="stats">
                   <OverviewStatCard
                     label={ui("决策记录", "Decision Records")}
                     value={stats.total}
@@ -2194,9 +2688,9 @@ function App() {
                   <h3>{postureTitle}</h3>
                   <p>{postureDescription}</p>
                 </div>
-                <div className="insight-list">
-                  <div className="insight-item">
-                    <span>{ui("需确认占比", "Approval Ratio")}</span>
+	                <div className="insight-list">
+	                  <div className="insight-item">
+	                    <span>{ui("需确认占比", "Approval Ratio")}</span>
                     <strong>{formatPercent(stats.challenge, stats.total)}</strong>
                   </div>
                   <div className="insight-item">
@@ -2210,10 +2704,85 @@ function App() {
                   <div className="insight-item">
                     <span>{ui("生效规则", "Active Rules")}</span>
                     <strong>{policies.length}</strong>
+	                  </div>
+	                </div>
+	              </aside>
+
+                <article className="panel-card overview-skill-card">
+                  <div className="overview-skill-head">
+                    <div>
+                      <span className="eyebrow">{ui("Skill 拦截", "Skill Interception")}</span>
+                      <h3>{skillPostureTitle}</h3>
+                      <p>{skillPostureDescription}</p>
+                    </div>
+                    <button
+                      className="ghost small"
+                      type="button"
+                      onClick={() => openSkillWorkspace()}
+                    >
+                      {ui("查看 Skill 面板", "Open Skill Panel")}
+                    </button>
                   </div>
-                </div>
-              </aside>
-            </div>
+
+                  <div className="overview-skill-stats">
+                    <div className="overview-skill-stat">
+                      <span>{ui("已发现 Skill", "Discovered Skills")}</span>
+                      <strong>{skillOverviewStats.total}</strong>
+                    </div>
+                    <div className="overview-skill-stat">
+                      <span>{ui("高风险 / 严重", "High / Critical")}</span>
+                      <strong>{skillOverviewStats.high_critical}</strong>
+                    </div>
+                    <div className="overview-skill-stat">
+                      <span>{ui("24 小时需确认 / 拦截", "24h Challenge / Block")}</span>
+                      <strong>{skillOverviewStats.challenge_block_24h}</strong>
+                    </div>
+                    <div className="overview-skill-stat">
+                      <span>{ui("未声明变更告警", "Undeclared Change Alerts")}</span>
+                      <strong>{skillOverviewStats.drift_alerts}</strong>
+                    </div>
+                    <div className="overview-skill-stat">
+                      <span>{ui("已隔离", "Quarantined")}</span>
+                      <strong>{skillOverviewStats.quarantined}</strong>
+                    </div>
+                  </div>
+
+                  {skillOverviewHighlights.length === 0 ? (
+                    <div className="chart-empty">
+                      {ui("当前还没有可展示的 Skill 风险快照。", "No skill highlights are available yet.")}
+                    </div>
+                  ) : (
+                    <div className="overview-skill-highlights">
+                      {skillOverviewHighlights.map((skill) => (
+                        <button
+                          key={skill.skill_id}
+                          className="overview-skill-item"
+                          type="button"
+                          onClick={() => openSkillWorkspace(skill.skill_id)}
+                        >
+                          <div className="overview-skill-item-main">
+                            <div className="overview-skill-item-head">
+                              <strong>{skill.name}</strong>
+                              <div className="skill-row-tags">
+                                <span className={`tag meta-tag severity-${skill.risk_tier}`}>{skillRiskLabel(skill.risk_tier)}</span>
+                                {skill.quarantined ? <span className="tag block">{ui("已隔离", "Quarantined")}</span> : null}
+                                {!skill.quarantined && skill.is_drifted ? <span className="tag warn">{ui("内容已变更", "Changed Without Version Update")}</span> : null}
+                              </div>
+                            </div>
+                            <div className="overview-skill-item-meta">
+                              {skillSourceLabel(skill.source)} · {ui("风险分", "Risk")} {skill.risk_score} · {ui("24h 拦截", "24h Intercepts")} {skill.intercept_count_24h}
+                            </div>
+                          </div>
+                          <div className="overview-skill-item-side">
+                            <span>{ui("最近扫描", "Last Scan")}</span>
+                            <strong>{formatTime(skill.last_scan_at || skill.last_seen_at)}</strong>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </article>
+	            </div>
 
             <div className="overview-charts">
               <DistributionChart
@@ -2782,6 +3351,525 @@ function App() {
                   </aside>
                 ) : null}
               </div>
+            </div>
+          </section>
+        ) : null}
+
+        {activeTab === "skills" ? (
+          <section
+            id="panel-skills"
+            className="tab-panel"
+            role="tabpanel"
+            aria-labelledby="tab-skills"
+          >
+            <div className="panel-card skills-panel">
+              <div className="card-head">
+                <div>
+                  <h2>{ui("Skill 拦截", "Skill Interception")}</h2>
+                  <p className="skills-intro">
+                    {ui(
+                      "后台会自动发现本地已安装 skills，给出风险等级、内容是否发生未声明变更，以及人工处置入口。低风险默认无感，高风险行为集中在详情和策略区处理。",
+                      "The dashboard discovers locally installed skills, scores their risk, highlights content changes without version updates, and exposes admin actions. Low-risk skills stay quiet while high-risk handling is concentrated in the detail and policy areas."
+                    )}
+                  </p>
+                </div>
+                <div className="header-actions">
+                  <span className="meta-pill">{ui("扫描目录", "Roots")} {toArray(skillStatusPayload?.roots).length}</span>
+                  <button
+                    className="ghost small"
+                    type="button"
+                    onClick={() => void loadSkillData({ silent: false, syncPolicy: !hasPendingSkillPolicyChanges })}
+                  >
+                    {ui("刷新", "Refresh")}
+                  </button>
+                </div>
+              </div>
+
+              <div className="skills-metrics">
+                <OverviewStatCard
+                  label={ui("已发现 Skill", "Discovered Skills")}
+                  value={skillOverviewStats.total}
+                />
+                <OverviewStatCard
+                  label={ui("高风险 / 严重", "High / Critical")}
+                  value={skillOverviewStats.high_critical}
+                  tone="bad"
+                />
+                <OverviewStatCard
+                  label={ui("24 小时需确认 / 拦截", "24h Challenge / Block")}
+                  value={skillOverviewStats.challenge_block_24h}
+                  tone="warn"
+                />
+                <OverviewStatCard
+                  label={ui("未声明变更告警", "Undeclared Change Alerts")}
+                  value={skillOverviewStats.drift_alerts}
+                  tone="warn"
+                />
+                <OverviewStatCard
+                  label={ui("已隔离", "Quarantined")}
+                  value={skillOverviewStats.quarantined}
+                  tone="bad"
+                />
+                <OverviewStatCard
+                  label={ui("受信覆盖", "Trust Overrides")}
+                  value={skillOverviewStats.trusted_overrides}
+                />
+              </div>
+
+              <div className="skills-layout">
+                <div className="panel-card skill-list-panel">
+                  <div className="skill-list-head">
+                    <div>
+                      <span className="eyebrow">{ui("筛选与列表", "Filters and List")}</span>
+                      <h3>{ui("优先按风险和处置状态收敛视图", "Narrow the list by risk and disposition")}</h3>
+                    </div>
+                    <div className="rule-meta">
+                      <span className="meta-pill">{ui("列表总数", "Listed")} {skillItems.length}</span>
+                      <span className="meta-pill">{ui("最近有拦截", "Recent Intercepts")} {skillSummaryCounts.recent_intercepts}</span>
+                    </div>
+                  </div>
+
+                  <div className="skills-toolbar">
+                    <label className="skill-filter-field">
+                      <span>{ui("风险", "Risk")}</span>
+                      <select value={skillRiskFilter} onChange={(event) => setSkillRiskFilter(event.target.value)}>
+                        {SKILL_RISK_FILTER_OPTIONS.map((option) => (
+                          <option key={option} value={option}>{skillRiskFilterLabel(option)}</option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="skill-filter-field">
+                      <span>{ui("状态", "State")}</span>
+                      <select value={skillStateFilter} onChange={(event) => setSkillStateFilter(event.target.value)}>
+                        {SKILL_STATE_FILTER_OPTIONS.map((option) => (
+                          <option key={option} value={option}>{skillStateFilterLabel(option)}</option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="skill-filter-field">
+                      <span>{ui("来源", "Source")}</span>
+                      <select value={skillSourceFilter} onChange={(event) => setSkillSourceFilter(event.target.value)}>
+                        <option value="all">{ui("全部来源", "All Sources")}</option>
+                        {skillSourceOptions.map((option) => (
+                          <option key={option} value={option}>{skillSourceLabel(option)}</option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="skill-filter-field">
+                      <span>{ui("内容变更", "Change Status")}</span>
+                      <select value={skillDriftFilter} onChange={(event) => setSkillDriftFilter(event.target.value)}>
+                        {SKILL_DRIFT_FILTER_OPTIONS.map((option) => (
+                          <option key={option} value={option}>{skillDriftFilterLabel(option)}</option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="skill-filter-field">
+                      <span>{ui("拦截", "Interception")}</span>
+                      <select value={skillInterceptFilter} onChange={(event) => setSkillInterceptFilter(event.target.value)}>
+                        {SKILL_INTERCEPT_FILTER_OPTIONS.map((option) => (
+                          <option key={option} value={option}>{skillInterceptFilterLabel(option)}</option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+
+                  {skillListLoading ? (
+                    <div className="chart-empty">{ui("Skill 列表加载中...", "Loading skills...")}</div>
+                  ) : skillItems.length === 0 ? (
+                    <div className="chart-empty">
+                      {ui("当前筛选下没有匹配的 Skill。", "No skills match the current filters.")}
+                    </div>
+                  ) : (
+                    <div className="skill-list">
+                      {skillItems.map((skill) => (
+                        <button
+                          key={skill.skill_id}
+                          className={`skill-row ${selectedSkillId === skill.skill_id ? "active" : ""}`}
+                          type="button"
+                          onClick={() => setSelectedSkillId(skill.skill_id)}
+                        >
+                          <div className="skill-row-main">
+                            <div className="skill-row-head">
+                              <div>
+                                <div className="skill-row-title">{skill.name}</div>
+                                <div className="skill-row-meta">
+                                  {skill.version || ui("未声明版本", "No version declared")}
+                                  {" · "}
+                                  {skill.author || ui("未声明作者", "No author declared")}
+                                </div>
+                              </div>
+                              <div className="skill-row-tags">
+                                <span className={`tag meta-tag severity-${skill.risk_tier}`}>{skillRiskLabel(skill.risk_tier)}</span>
+                                <span className={`tag ${skill.state === "quarantined" ? "block" : skill.state === "trusted" ? "warn" : "allow"}`}>
+                                  {skillStateLabel(skill.state)}
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="skill-row-subline">{skillSourceLabel(skill.source, skill.source_detail)}</div>
+
+                            <div className="skill-row-foot">
+                              <span>{ui("最近扫描", "Last scan")} {formatTime(skill.last_scan_at || skill.last_seen_at)}</span>
+                              <span>{ui("近 24h 拦截", "24h intercepts")} {skill.intercept_count_24h}</span>
+                              <span>{ui("哈希", "Hash")} {formatHash(skill.current_hash, 12)}</span>
+                            </div>
+                          </div>
+
+                          <div className="skill-row-side">
+                            <strong>{skill.risk_score}</strong>
+                            <span>{ui("风险分", "Risk Score")}</span>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <aside className="panel-card skill-detail-panel">
+                  {!selectedSkill ? (
+                    <div className="chart-empty">{ui("选择一个 Skill 查看详情。", "Select a skill to inspect details.")}</div>
+                  ) : (
+                    <>
+                      <div className="skill-detail-head">
+                        <div>
+                          <span className="eyebrow">{ui("实时画像", "Live Profile")}</span>
+                          <h3>{selectedSkill.name}</h3>
+                          <p className="skill-detail-intro">
+                            {selectedSkill.headline || ui("当前 Skill 没有额外摘要。", "No additional summary is available for this skill.")}
+                          </p>
+                        </div>
+                        <div className="skill-detail-actions">
+                          <button
+                            className="ghost small"
+                            type="button"
+                            onClick={() => triggerSkillRescan(selectedSkill.skill_id)}
+                            disabled={skillActionLoading === `rescan:${selectedSkill.skill_id}`}
+                          >
+                            {skillActionLoading === `rescan:${selectedSkill.skill_id}`
+                              ? ui("重扫中...", "Rescanning...")
+                              : ui("重扫", "Rescan")}
+                          </button>
+                          <button
+                            className="ghost small"
+                            type="button"
+                            onClick={() => requestSkillConfirm("quarantine", selectedSkill, !selectedSkill.quarantined)}
+                            disabled={Boolean(skillActionLoading)}
+                          >
+                            {selectedSkill.quarantined ? ui("解除隔离", "Remove Quarantine") : ui("隔离", "Quarantine")}
+                          </button>
+                          <button
+                            className="primary small"
+                            type="button"
+                            onClick={() => requestSkillConfirm("trust", selectedSkill, !selectedSkill.trust_override)}
+                            disabled={Boolean(skillActionLoading)}
+                          >
+                            {selectedSkill.trust_override ? ui("撤销受信", "Remove Override") : ui("设为受信", "Trust Override")}
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="skill-score-card">
+                        <div className="skill-score-top">
+                          <div>
+                            <div className="skill-score-label">{ui("综合风险", "Composite Risk")}</div>
+                            <div className="skill-score-value">{selectedSkill.risk_score}</div>
+                          </div>
+                          <div className="skill-score-side">
+                            <span className={`tag meta-tag severity-${selectedSkill.risk_tier}`}>{skillRiskLabel(selectedSkill.risk_tier)}</span>
+                            <span className={`tag ${selectedSkill.scan_status === "ready" ? "allow" : selectedSkill.scan_status === "stale" ? "warn" : "challenge"}`}>
+                              {skillScanStatusLabel(selectedSkill.scan_status)}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="skill-score-track" aria-hidden="true">
+                          <span style={{ width: `${Math.max(6, selectedSkill.risk_score)}%` }} />
+                        </div>
+                        <div className="skill-score-meta">
+                          <span>{ui("置信度", "Confidence")} {formatConfidence(selectedSkill.confidence)}</span>
+                          <span>{ui("近 24h challenge / block", "24h challenge / block")} {selectedSkill.intercept_count_24h}</span>
+                          {selectedSkill.is_drifted ? <span>{ui("内容变了但版本没变", "Changed without version update")}</span> : null}
+                        </div>
+                      </div>
+
+                      <div className="skill-meta-grid">
+                        <div className="skill-meta-item">
+                          <span>{ui("版本", "Version")}</span>
+                          <strong>{selectedSkill.version || ui("未声明", "Undeclared")}</strong>
+                        </div>
+                        <div className="skill-meta-item">
+                          <span>{ui("作者", "Author")}</span>
+                          <strong>{selectedSkill.author || ui("未声明", "Undeclared")}</strong>
+                        </div>
+                        <div className="skill-meta-item">
+                          <span>{ui("来源", "Source")}</span>
+                          <strong>{skillSourceLabel(selectedSkill.source, selectedSkill.source_detail)}</strong>
+                        </div>
+                        <div className="skill-meta-item">
+                          <span>{ui("状态", "State")}</span>
+                          <strong>{skillStateLabel(selectedSkill.state)}</strong>
+                        </div>
+                        <div className="skill-meta-item skill-meta-item-wide">
+                          <span>{ui("安装路径", "Install Path")}</span>
+                          <strong>{selectedSkill.install_path}</strong>
+                        </div>
+                        <div className="skill-meta-item skill-meta-item-wide">
+                          <span>{ui("当前哈希", "Current Hash")}</span>
+                          <strong>{selectedSkill.current_hash}</strong>
+                        </div>
+                      </div>
+
+                      <section className="skill-section">
+                        <div className="skill-section-head">
+                          <h4>{ui("当前发现的风险信号", "Current Risk Signals")}</h4>
+                          <span className="meta-pill">{selectedSkillFindings.length}</span>
+                        </div>
+                        {selectedSkillFindings.length === 0 ? (
+                          <div className="chart-empty">{ui("最近一次扫描没有发现新的高风险信号。", "No new high-risk signals were found in the latest scan.")}</div>
+                        ) : (
+                          <div className="skill-finding-list">
+                            {selectedSkillFindings.map((finding, index) => (
+                              <article key={`${finding.code}-${index}`} className="skill-finding-card">
+                                <div className="skill-finding-head">
+                                  <strong>{skillReasonLabel(finding.code)}</strong>
+                                  <div className="skill-row-tags">
+                                    <span className="tag meta-tag">{skillSeverityLabel(finding.severity)}</span>
+                                    <DecisionTag decision={finding.decision} />
+                                  </div>
+                                </div>
+                                <p>{finding.detail}</p>
+                                {finding.excerpt ? <code>{finding.excerpt}</code> : null}
+                              </article>
+                            ))}
+                          </div>
+                        )}
+                      </section>
+
+                      <section className="skill-section">
+                        <div className="skill-section-head">
+                          <h4>{ui("最近活动", "Recent Activity")}</h4>
+                          <span className="meta-pill">{selectedSkillActivity.length}</span>
+                        </div>
+                        {skillDetailLoading && selectedSkillActivity.length === 0 ? (
+                          <div className="chart-empty">{ui("活动加载中...", "Loading activity...")}</div>
+                        ) : selectedSkillActivity.length === 0 ? (
+                          <div className="chart-empty">{ui("当前没有额外活动记录。", "No extra activity records yet.")}</div>
+                        ) : (
+                          <div className="skill-activity-list">
+                            {selectedSkillActivity.map((activity, index) => (
+                              <article key={`${activity.kind}-${activity.ts}-${index}`} className="skill-activity-item">
+                                <div className="skill-activity-top">
+                                  <strong>{skillActivityLabel(activity.kind)}</strong>
+                                  <span>{formatTime(activity.ts)}</span>
+                                </div>
+                                <div className="skill-activity-title">{activity.title === activity.kind ? skillActivityLabel(activity.kind) : activity.title}</div>
+                                <p>{activity.detail}</p>
+                              </article>
+                            ))}
+                          </div>
+                        )}
+                      </section>
+                    </>
+                  )}
+                </aside>
+              </div>
+
+              <section className="panel-card skill-policy-panel">
+                <div className="card-head">
+                  <div>
+                    <h3>{ui("拦截策略设置", "Interception Policy")}</h3>
+                    <p className="skills-intro">
+                      {ui(
+                        "这里控制分数阈值、风险 × 严重度矩阵，以及未扫描 / 内容变了但版本没变时的默认动作。策略区使用显式保存，避免误触即时生效。",
+                        "This section controls score thresholds, the risk-by-severity matrix, and default actions for unscanned skills or ones whose content changed without a version update. Saving is explicit to avoid accidental live changes."
+                      )}
+                    </p>
+                  </div>
+                  <div className="header-actions">
+                    <span className={`meta-pill ${hasPendingSkillPolicyChanges ? "meta-pill-highlight" : ""}`}>
+                      {hasPendingSkillPolicyChanges ? ui("有未保存修改", "Unsaved Changes") : ui("已同步", "In Sync")}
+                    </span>
+                    <button
+                      className="ghost small"
+                      type="button"
+                      disabled={!hasPendingSkillPolicyChanges || skillPolicySaving}
+                      onClick={resetSkillPolicyDraft}
+                    >
+                      {ui("重置", "Reset")}
+                    </button>
+                    <button
+                      className="primary small"
+                      type="button"
+                      disabled={!hasPendingSkillPolicyChanges || skillPolicySaving}
+                      onClick={() => void saveSkillPolicyChanges()}
+                    >
+                      {skillPolicySaving ? ui("保存中...", "Saving...") : ui("保存策略", "Save Policy")}
+                    </button>
+                  </div>
+                </div>
+
+                {skillPolicy ? (
+                  <>
+                    <div className="skill-policy-grid">
+                      <label className="skill-policy-field">
+                        <span>{ui("Medium 阈值", "Medium Threshold")}</span>
+                        <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          value={skillPolicy.thresholds.medium}
+                          onChange={(event) => updateSkillThreshold("medium", event.target.value)}
+                        />
+                      </label>
+                      <label className="skill-policy-field">
+                        <span>{ui("High 阈值", "High Threshold")}</span>
+                        <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          value={skillPolicy.thresholds.high}
+                          onChange={(event) => updateSkillThreshold("high", event.target.value)}
+                        />
+                      </label>
+                      <label className="skill-policy-field">
+                        <span>{ui("Critical 阈值", "Critical Threshold")}</span>
+                        <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          value={skillPolicy.thresholds.critical}
+                          onChange={(event) => updateSkillThreshold("critical", event.target.value)}
+                        />
+                      </label>
+                      <label className="skill-policy-field">
+                        <span>{ui("临时受信时长（小时）", "Trust Override Duration (h)")}</span>
+                        <input
+                          type="number"
+                          min="1"
+                          max="168"
+                          value={skillPolicy.defaults.trust_override_hours}
+                          onChange={(event) => updateSkillDefaultAction("trust_override_hours", event.target.value)}
+                        />
+                      </label>
+                    </div>
+
+                    <div className="skill-policy-table-wrap">
+                      <table className="skill-policy-table">
+                        <thead>
+                          <tr>
+                            <th>{ui("风险 \\ 严重度", "Risk \\ Severity")}</th>
+                            {SKILL_SEVERITY_LEVELS.map((severity) => (
+                              <th key={severity}>{skillSeverityLabel(severity)}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {SKILL_POLICY_TIERS.map((tier) => (
+                            <tr key={tier}>
+                              <th scope="row">
+                                {tier === "unknown" ? ui("未扫描 / 过期", "Unscanned / Stale") : skillRiskLabel(tier)}
+                              </th>
+                              {SKILL_SEVERITY_LEVELS.map((severity) => (
+                                <td key={`${tier}-${severity}`}>
+                                  <select
+                                    value={skillPolicy.matrix[tier][severity]}
+                                    onChange={(event) => updateSkillMatrixDecision(tier, severity, event.target.value)}
+                                  >
+                                    {DECISION_OPTIONS.map((decision) => (
+                                      <option key={decision} value={decision}>{decisionLabel(decision)}</option>
+                                    ))}
+                                  </select>
+                                </td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <div className="skill-policy-grid skill-policy-grid-secondary">
+                      <label className="skill-policy-field">
+                        <span>{ui("未扫描 S2 默认动作", "Unscanned S2 Default")}</span>
+                        <select
+                          value={skillPolicy.defaults.unscanned.S2}
+                          onChange={(event) => updateSkillDefaultAction("unscanned_S2", event.target.value)}
+                        >
+                          {DECISION_OPTIONS.map((decision) => (
+                            <option key={decision} value={decision}>{decisionLabel(decision)}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="skill-policy-field">
+                        <span>{ui("未扫描 S3 默认动作", "Unscanned S3 Default")}</span>
+                        <select
+                          value={skillPolicy.defaults.unscanned.S3}
+                          onChange={(event) => updateSkillDefaultAction("unscanned_S3", event.target.value)}
+                        >
+                          {DECISION_OPTIONS.map((decision) => (
+                            <option key={decision} value={decision}>{decisionLabel(decision)}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="skill-policy-field">
+                        <span>{ui("内容变了但版本没变时的默认动作", "Default Action for Undeclared Change")}</span>
+                        <select
+                          value={skillPolicy.defaults.drifted_action}
+                          onChange={(event) => updateSkillDefaultAction("drifted_action", event.target.value)}
+                        >
+                          {DECISION_OPTIONS.map((decision) => (
+                            <option key={decision} value={decision}>{decisionLabel(decision)}</option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                  </>
+                ) : (
+                  <div className="chart-empty">{ui("策略加载中...", "Loading policy...")}</div>
+                )}
+              </section>
+
+              {skillConfirmAction ? (
+                <div
+                  className="confirm-dialog-backdrop"
+                  role="dialog"
+                  aria-modal="true"
+                  aria-label={ui("Skill 操作确认", "Skill action confirmation")}
+                  onClick={cancelSkillConfirmAction}
+                >
+                  <div className="confirm-dialog-card" onClick={(event) => event.stopPropagation()}>
+                    <h4>
+                      {skillConfirmAction.kind === "quarantine"
+                        ? skillConfirmAction.enable
+                          ? ui("确认隔离这个 Skill？", "Quarantine this skill?")
+                          : ui("确认解除隔离？", "Remove quarantine?")
+                        : skillConfirmAction.enable
+                          ? ui("确认设置临时受信？", "Apply trust override?")
+                          : ui("确认撤销受信覆盖？", "Remove trust override?")}
+                    </h4>
+                    <p className="confirm-dialog-text">
+                      {skillConfirmAction.kind === "quarantine"
+                        ? skillConfirmAction.enable
+                          ? ui("隔离后，这个 Skill 的高危调用会以更严格策略处理，适合先止血再排查。", "Once quarantined, this skill's high-risk calls will be handled with stricter blocking. Use this to contain risk first.")
+                          : ui("解除隔离后，Skill 会重新按风险矩阵参与评估。", "Removing quarantine puts the skill back on the normal risk matrix.")
+                        : skillConfirmAction.enable
+                          ? ui(`受信覆盖会保留审计，并按当前默认时长 ${skillPolicy?.defaults?.trust_override_hours || 6} 小时自动过期。`, `The trust override remains audited and will expire after ${skillPolicy?.defaults?.trust_override_hours || 6} hours by default.`)
+                          : ui("撤销后，Skill 会重新使用正常风险等级和决策矩阵。", "Removing the override restores the normal risk tier and decision matrix.")}
+                    </p>
+                    <div className="confirm-dialog-path">{skillConfirmAction.skillName || skillConfirmAction.skillId}</div>
+                    <div className="confirm-dialog-actions">
+                      <button className="ghost small" type="button" onClick={cancelSkillConfirmAction}>
+                        {ui("取消", "Cancel")}
+                      </button>
+                      <button className="primary small" type="button" onClick={confirmSkillAction}>
+                        {ui("确认", "Confirm")}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
             </div>
           </section>
         ) : null}

@@ -10,6 +10,7 @@ import {
   matchesAdminDecisionFilter,
   normalizeAdminDecisionFilterId,
 } from "../src/admin/dashboard_url_state.ts";
+import { SkillInterceptionStore } from "../src/admin/skill_interception_store.ts";
 import { listOpenClawChatSessions } from "../src/admin/openclaw_session_catalog.ts";
 import { ConfigManager } from "../src/config/loader.ts";
 import { applyRuntimeOverride, type RuntimeOverride } from "../src/config/runtime_override.ts";
@@ -466,6 +467,7 @@ function handleApi(
   url: URL,
   runtime: AdminRuntime,
   strategyStore: StrategyStore,
+  skillStore: SkillInterceptionStore,
 ): void {
   const locale = resolveRequestLocale(req, url);
 
@@ -504,6 +506,167 @@ function handleApi(
       sendJson(res, 500, { error: String(error) });
     }
     return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/skills/status") {
+    try {
+      sendJson(res, 200, skillStore.getStatus());
+    } catch (error) {
+      sendJson(res, 500, { error: String(error) });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/skills") {
+    try {
+      sendJson(
+        res,
+        200,
+        skillStore.listSkills({
+          risk: url.searchParams.get("risk"),
+          state: url.searchParams.get("state"),
+          source: url.searchParams.get("source"),
+          drift: url.searchParams.get("drift"),
+          intercepted: url.searchParams.get("intercepted"),
+        }),
+      );
+    } catch (error) {
+      sendJson(res, 500, { error: String(error) });
+    }
+    return;
+  }
+
+  if (req.method === "PUT" && url.pathname === "/api/skills/policy") {
+    void (async () => {
+      try {
+        const body = await readBody(req);
+        const policy = skillStore.writePolicyConfig(body);
+        sendJson(res, 200, {
+          ok: true,
+          restart_required: false,
+          message: localize(
+            locale,
+            "Skill 拦截策略已保存到本地 SQLite，并会在下一次扫描与后台刷新时自动生效。",
+            "Skill interception policy has been saved to local SQLite and will apply on the next scan and dashboard refresh.",
+          ),
+          policy,
+        });
+      } catch (error) {
+        sendJson(res, 400, { ok: false, error: String(error) });
+      }
+    })();
+    return;
+  }
+
+  const skillRouteMatch = url.pathname.match(/^\/api\/skills\/([^/]+?)(?:\/(rescan|quarantine|trust-override))?$/);
+  if (skillRouteMatch) {
+    const skillId = decodeURIComponent(skillRouteMatch[1]);
+    const action = skillRouteMatch[2];
+
+    if (req.method === "GET" && !action) {
+      try {
+        const detail = skillStore.getSkill(skillId);
+        if (!detail) {
+          sendJson(res, 404, { error: "skill not found" });
+          return;
+        }
+        sendJson(res, 200, detail);
+      } catch (error) {
+        sendJson(res, 500, { error: String(error) });
+      }
+      return;
+    }
+
+    if (req.method === "POST" && action === "rescan") {
+      try {
+        const detail = skillStore.rescanSkill(skillId, "admin-ui");
+        if (!detail) {
+          sendJson(res, 404, { error: "skill not found" });
+          return;
+        }
+        sendJson(res, 200, {
+          ok: true,
+          message: localize(
+            locale,
+            "Skill 已完成重扫，风险结论和最新信号已刷新。",
+            "The skill has been rescanned and the latest risk signals have been refreshed.",
+          ),
+          detail,
+        });
+      } catch (error) {
+        sendJson(res, 400, { ok: false, error: String(error) });
+      }
+      return;
+    }
+
+    if (req.method === "POST" && action === "quarantine") {
+      void (async () => {
+        try {
+          const body = await readBody(req);
+          const detail = skillStore.setQuarantine(skillId, {
+            quarantined: Boolean(body.quarantined),
+            updatedBy: typeof body.updated_by === "string" ? body.updated_by : "admin-ui",
+          });
+          if (!detail) {
+            sendJson(res, 404, { error: "skill not found" });
+            return;
+          }
+          sendJson(res, 200, {
+            ok: true,
+            message: body.quarantined
+              ? localize(
+                  locale,
+                  "Skill 已隔离，高危调用会按更严格策略阻断。",
+                  "The skill is quarantined and high-risk calls will be blocked more aggressively.",
+                )
+              : localize(
+                  locale,
+                  "Skill 已解除隔离，后续将按风险策略继续评估。",
+                  "The skill quarantine has been removed and future actions will follow risk policy again.",
+                ),
+            detail,
+          });
+        } catch (error) {
+          sendJson(res, 400, { ok: false, error: String(error) });
+        }
+      })();
+      return;
+    }
+
+    if (req.method === "POST" && action === "trust-override") {
+      void (async () => {
+        try {
+          const body = await readBody(req);
+          const detail = skillStore.setTrustOverride(skillId, {
+            enabled: Boolean(body.enabled),
+            updatedBy: typeof body.updated_by === "string" ? body.updated_by : "admin-ui",
+            ...(typeof body.hours === "number" ? { hours: body.hours } : {}),
+          });
+          if (!detail) {
+            sendJson(res, 404, { error: "skill not found" });
+            return;
+          }
+          sendJson(res, 200, {
+            ok: true,
+            message: body.enabled
+              ? localize(
+                  locale,
+                  "Skill 已设置临时受信覆盖，仍会保留审计记录与过期时间。",
+                  "A temporary trust override has been applied. Audit records and expiry time are preserved.",
+                )
+              : localize(
+                  locale,
+                  "Skill 的受信覆盖已撤销，风险矩阵恢复正常生效。",
+                  "The trust override has been removed and the normal risk matrix is active again.",
+                ),
+            detail,
+          });
+        } catch (error) {
+          sendJson(res, 400, { ok: false, error: String(error) });
+        }
+      })();
+      return;
+    }
   }
 
   if (req.method === "GET" && url.pathname === "/api/file-rule/directories") {
@@ -773,7 +936,11 @@ export function startAdminServer(options: AdminServerOptions = {}): Promise<Admi
       warn: (message: string) => logger.warn?.(`SafeClaw strategy store: ${message}`)
     }
   });
+  const skillStore = new SkillInterceptionStore(runtime.dbPath, {
+    openClawHome: runtime.openClawHome,
+  });
   let strategyStoreClosed = false;
+  let skillStoreClosed = false;
   function closeStrategyStore(): void {
     if (strategyStoreClosed) {
       return;
@@ -781,6 +948,17 @@ export function startAdminServer(options: AdminServerOptions = {}): Promise<Admi
     strategyStoreClosed = true;
     try {
       strategyStore.close();
+    } catch {
+      // Ignore close errors during shutdown paths.
+    }
+  }
+  function closeSkillStore(): void {
+    if (skillStoreClosed) {
+      return;
+    }
+    skillStoreClosed = true;
+    try {
+      skillStore.close();
     } catch {
       // Ignore close errors during shutdown paths.
     }
@@ -796,7 +974,7 @@ export function startAdminServer(options: AdminServerOptions = {}): Promise<Admi
     const server = http.createServer((req, res) => {
       const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
       if (url.pathname.startsWith("/api/")) {
-        handleApi(req, res, url, runtime, strategyStore);
+        handleApi(req, res, url, runtime, strategyStore, skillStore);
         return;
       }
       serveStatic(req, res, url);
@@ -807,6 +985,7 @@ export function startAdminServer(options: AdminServerOptions = {}): Promise<Admi
       if (error.code === "EADDRINUSE") {
         resolved = true;
         closeStrategyStore();
+        closeSkillStore();
         logger.warn?.(
           `SafeClaw admin already running on http://127.0.0.1:${runtime.port} (port in use); reusing existing server.`,
         );
@@ -814,6 +993,7 @@ export function startAdminServer(options: AdminServerOptions = {}): Promise<Admi
         return;
       }
       closeStrategyStore();
+      closeSkillStore();
       logger.error?.(`SafeClaw admin failed to start: ${String(error)}`);
       reject(error);
     });
@@ -837,6 +1017,7 @@ export function startAdminServer(options: AdminServerOptions = {}): Promise<Admi
         delete current.__safeclawAdminStartPromise;
       }
       closeStrategyStore();
+      closeSkillStore();
     });
   });
 

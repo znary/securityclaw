@@ -65,6 +65,7 @@ test("config loader reads default YAML and keeps policies", () => {
   const config = createConfig();
   assert.equal(config.version, "1.0");
   assert.equal(config.policies.length, 17);
+  assert.deepEqual(config.file_rules, []);
   assert.equal(config.hooks.before_tool_call.fail_mode, "close");
   assert.equal(config.dlp.patterns[0].name, "email");
   assert.equal(config.policies[0]?.title, "高危命令模式默认拦截");
@@ -484,6 +485,32 @@ test("plugin challenges filesystem reads from communication stores", async () =>
   });
   assert.equal(result.decision, "challenge");
   assert.deepEqual(result.reason_codes, ["COMMUNICATION_STORE_ACCESS_REQUIRES_APPROVAL"]);
+});
+
+test("plugin file rules with allow bypass downstream filesystem blocks", async () => {
+  const config = structuredClone(createConfig());
+  config.file_rules = [
+    {
+      id: "user-docs-allow",
+      directory: "/Users/liuzhuangm4/Library/Application Support/Google/Chrome",
+      decision: "allow",
+      reason_codes: ["USER_FILE_RULE_ALLOW"]
+    }
+  ];
+  const plugin = createSafeClawPlugin({ config, generate_trace_id: () => "trace-file-rule-allow" });
+  const result = await plugin.hooks.before_tool_call({
+    actor_id: "employee",
+    workspace: "payments",
+    scope: "default",
+    tool_name: "filesystem.read",
+    tool_group: "filesystem",
+    operation: "read",
+    resource_scope: "workspace_outside",
+    resource_paths: ["/Users/liuzhuangm4/Library/Application Support/Google/Chrome/Default/Cookies"],
+  });
+  assert.equal(result.decision, "allow");
+  assert.equal(result.decision_source, "file_rule");
+  assert.deepEqual(result.reason_codes, ["USER_FILE_RULE_ALLOW"]);
 });
 
 test("plugin blocks filesystem reads of browser secret stores", async () => {

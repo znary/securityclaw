@@ -7,6 +7,7 @@
 - [PRD](./PRD.md)
 - [Technical Solution](./TECHNICAL_SOLUTION.md)
 - [Architecture](./ARCHITECTURE.md)
+- [Skill Interception Solution](./SKILL_INTERCEPTION_SOLUTION.md)
 
 ## Setup and Operations
 

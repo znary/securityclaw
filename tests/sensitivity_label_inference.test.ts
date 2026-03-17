@@ -78,3 +78,34 @@ test("inferSensitivityLabels supports runtime custom path rules", () => {
 
   assert(labels.assetLabels.includes("financial"));
 });
+
+test("inferSensitivityLabels does not fallback to builtin rules when explicit empty rules are provided", () => {
+  const labels = inferSensitivityLabels(
+    "filesystem",
+    ["/Users/liuzhuangm4/.aws/credentials"],
+    undefined,
+    [],
+  );
+
+  assert.equal(labels.assetLabels.includes("credential"), false);
+  assert.equal(labels.dataLabels.includes("secret"), false);
+});
+
+test("inferSensitivityLabels prefix matching enforces path boundaries", () => {
+  const labels = inferSensitivityLabels(
+    "filesystem",
+    ["/srv/secrets-archive/dump.txt"],
+    undefined,
+    [
+      {
+        id: "custom-secrets-prefix",
+        asset_label: "credential",
+        match_type: "prefix",
+        pattern: "/srv/secrets",
+        source: "custom"
+      }
+    ],
+  );
+
+  assert.equal(labels.assetLabels.includes("credential"), false);
+});

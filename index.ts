@@ -36,6 +36,7 @@ import {
   isPathLikeCandidate,
   resolvePathCandidate,
 } from "./src/domain/services/path_candidate_inference.ts";
+import { defaultFileRuleReasonCode, matchFileRule } from "./src/domain/services/file_rule_registry.ts";
 import { hydrateSensitivePathConfig } from "./src/domain/services/sensitive_path_registry.ts";
 import { inferShellFilesystemSemantic } from "./src/domain/services/shell_filesystem_inference.ts";
 import { inferSensitivityLabels } from "./src/domain/services/sensitivity_label_inference.ts";
@@ -2253,15 +2254,28 @@ const plugin = {
           rawArguments,
           argsSummary,
         );
-        const matches = current.ruleEngine.match(decisionContext);
-        const rules = matchedRuleIds(matches);
-        const outcome = current.decisionEngine.evaluate(decisionContext, matches);
+        const matchedFileRule = matchFileRule(decisionContext.resource_paths, current.config.file_rules);
+        const matches = matchedFileRule ? [] : current.ruleEngine.match(decisionContext);
+        const rules = matchedFileRule ? `file_rule:${matchedFileRule.id}` : matchedRuleIds(matches);
+        const outcome = matchedFileRule
+          ? {
+              decision: matchedFileRule.decision,
+              decision_source: "file_rule" as const,
+              reason_codes: matchedFileRule.reason_codes?.length
+                ? [...matchedFileRule.reason_codes]
+                : [defaultFileRuleReasonCode(matchedFileRule.decision)],
+              matched_rules: [],
+              ...(matchedFileRule.decision === "challenge"
+                ? { challenge_ttl_seconds: current.config.defaults.approval_ttl_seconds }
+                : {}),
+            }
+          : current.decisionEngine.evaluate(decisionContext, matches);
         const traceId = decisionContext.security_context.trace_id;
-        const ruleIds = matches.map((match) => match.rule.rule_id);
+        const ruleIds = matchedFileRule ? [`file_rule:${matchedFileRule.id}`] : matches.map((match) => match.rule.rule_id);
         const effectiveToolName = decisionContext.tool_name ?? normalizedToolName ?? "unknown-tool";
         const approvalSubject = resolveApprovalSubject(hookContext);
         const accountPolicy = current.accountPolicyEngine.getPolicy(approvalSubject);
-        const accountOverride = current.accountPolicyEngine.evaluate(approvalSubject);
+        const accountOverride = matchedFileRule ? undefined : current.accountPolicyEngine.evaluate(approvalSubject);
         const approvalRequestKey = createApprovalRequestKey({
           policy_version: current.config.policy_version,
           scope: decisionContext.scope,

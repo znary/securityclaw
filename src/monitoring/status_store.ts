@@ -3,7 +3,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 type Decision = "allow" | "warn" | "challenge" | "block";
-type DecisionSource = "rule" | "default" | "approval" | "account";
+type DecisionSource = "rule" | "default" | "approval" | "account" | "file_rule";
 
 type HookCounter = {
   total: number;

@@ -103,6 +103,7 @@ const BUILTIN_SENSITIVE_PATH_RULES: SensitivePathRule[] = [
   builtinRule("communication-store-thunderbird", "communication_store", "regex", "(?:^|/)\\.thunderbird(?:/|$)"),
   builtinRule("communication-store-linux-mail", "communication_store", "regex", "(?:^|/)\\.local/share/(?:evolution|mail)(?:/|$)"),
 ];
+const BUILTIN_SENSITIVE_PATH_RULE_ID_SET = new Set(BUILTIN_SENSITIVE_PATH_RULES.map((rule) => rule.id));
 
 function trimmedString(value: unknown): string | undefined {
   if (typeof value !== "string") {
@@ -138,6 +139,19 @@ function dedupeRules(rules: SensitivePathRule[]): SensitivePathRule[] {
   return sortRules(Array.from(map.values()));
 }
 
+function isValidRulePattern(matchType: SensitivePathMatchType, pattern: string): boolean {
+  if (matchType !== "regex") {
+    return true;
+  }
+  try {
+    // Validate custom regex syntax upfront to avoid silently storing dead rules.
+    new RegExp(pattern, "i");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function cloneSensitivePathRule(rule: SensitivePathRule): SensitivePathRule {
   return { ...rule };
 }
@@ -162,6 +176,9 @@ export function normalizeSensitivePathRule(
   const source = trimmedString(record.source) as SensitivePathSource | undefined;
 
   if (!id || !assetLabel || !matchType || !pattern || !VALID_MATCH_TYPES.has(matchType)) {
+    return undefined;
+  }
+  if (!isValidRulePattern(matchType, pattern)) {
     return undefined;
   }
 
@@ -213,9 +230,13 @@ export function normalizeSensitivePathStrategyOverride(value: unknown): Sensitiv
             .map((entry) => trimmedString(entry))
             .filter((entry): entry is string => Boolean(entry)),
         ),
-      ).sort((left, right) => left.localeCompare(right))
+      )
+        .filter((entry) => BUILTIN_SENSITIVE_PATH_RULE_ID_SET.has(entry))
+        .sort((left, right) => left.localeCompare(right))
     : undefined;
-  const customPathRules = normalizeSensitivePathRules(record.custom_path_rules, "custom");
+  const customPathRules = normalizeSensitivePathRules(record.custom_path_rules, "custom")
+    .filter((rule) => !BUILTIN_SENSITIVE_PATH_RULE_ID_SET.has(rule.id))
+    .map((rule) => ({ ...rule, source: "custom" as const }));
 
   if (!disabledBuiltinIds?.length && customPathRules.length === 0) {
     return undefined;

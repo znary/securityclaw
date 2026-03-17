@@ -18,6 +18,14 @@ test("strategy store persists override in sqlite", () => {
     store.writeOverride({
       environment: "prod",
       policy_version: "2026-03-14",
+      file_rules: [
+        {
+          id: "user-downloads-allow",
+          directory: "/Users/liuzhuangm4/Downloads",
+          decision: "allow",
+          reason_codes: ["USER_FILE_RULE_ALLOW"]
+        }
+      ],
       sensitivity: {
         disabled_builtin_ids: ["download-staging-downloads-directory"],
         custom_path_rules: [
@@ -41,6 +49,7 @@ test("strategy store persists override in sqlite", () => {
     assert.equal(store.readOverride()?.environment, "prod");
     assert.equal(store.readOverride()?.policy_version, "2026-03-14");
     assert.equal(store.readOverride()?.account_policies?.[0]?.subject, "telegram:chat-42");
+    assert.equal(store.readOverride()?.file_rules?.[0]?.id, "user-downloads-allow");
     assert.equal(store.readOverride()?.sensitivity?.disabled_builtin_ids?.[0], "download-staging-downloads-directory");
     assert.equal(store.readOverride()?.sensitivity?.custom_path_rules?.[0]?.id, "custom-sensitive-share");
 
@@ -49,6 +58,7 @@ test("strategy store persists override in sqlite", () => {
     assert.equal(store.readOverride()?.environment, "prod");
     assert.equal(store.readOverride()?.policy_version, "2026-03-14");
     assert.equal(store.readOverride()?.account_policies?.[0]?.mode, "default_allow");
+    assert.equal(store.readOverride()?.file_rules?.[0]?.decision, "allow");
     assert.equal(store.readOverride()?.sensitivity?.custom_path_rules?.[0]?.pattern, "/srv/secrets");
   } finally {
     store?.close();

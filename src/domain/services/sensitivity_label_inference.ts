@@ -64,7 +64,7 @@ function normalizePathRulePattern(pattern: string): string {
 function matchesSensitivePathRule(rule: SensitivePathRule, candidate: string): boolean {
   try {
     if (rule.match_type === "prefix") {
-      return candidate.startsWith(normalizePathRulePattern(rule.pattern));
+      return matchesPrefixPattern(rule.pattern, candidate);
     }
     if (rule.match_type === "glob") {
       return globToRegExp(normalizePathRulePattern(rule.pattern)).test(candidate);
@@ -76,10 +76,24 @@ function matchesSensitivePathRule(rule: SensitivePathRule, candidate: string): b
 }
 
 function resolveSensitivePathRules(rules?: SensitivePathRule[]): SensitivePathRule[] {
-  if (!rules || rules.length === 0) {
+  if (!rules) {
     return getBuiltinSensitivePathRules();
   }
   return rules.map((rule) => ({ ...rule }));
+}
+
+function matchesPrefixPattern(pattern: string, candidate: string): boolean {
+  const normalizedPrefix = normalizePathRulePattern(pattern);
+  if (!normalizedPrefix) {
+    return false;
+  }
+  if (candidate === normalizedPrefix) {
+    return true;
+  }
+  if (normalizedPrefix.endsWith("/")) {
+    return candidate.startsWith(normalizedPrefix);
+  }
+  return candidate.startsWith(`${normalizedPrefix}/`);
 }
 
 function normalizeText(value: string): string {

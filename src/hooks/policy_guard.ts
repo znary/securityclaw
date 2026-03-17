@@ -2,6 +2,7 @@ import type {
   ApprovalRecord,
   BeforeToolCallInput,
   DecisionContext,
+  FileRule,
   GuardComputation,
   SecurityContext,
   SensitivePathRule,
@@ -9,6 +10,7 @@ import type {
 import type { ApprovalFsm } from "../engine/approval_fsm.ts";
 import type { DecisionEngine } from "../engine/decision_engine.ts";
 import type { RuleEngine } from "../engine/rule_engine.ts";
+import { defaultFileRuleReasonCode, matchFileRule } from "../domain/services/file_rule_registry.ts";
 import { inferSensitivityLabels } from "../domain/services/sensitivity_label_inference.ts";
 
 function buildSecurityContext(
@@ -93,6 +95,7 @@ export function runPolicyGuard(
   decisionEngine: DecisionEngine,
   approvals: ApprovalFsm,
   sensitivePathRules: SensitivePathRule[] = [],
+  fileRules: FileRule[] = [],
 ): GuardComputation<BeforeToolCallInput> {
   const securityContext = buildSecurityContext(input, policyVersion, traceId, nowIso);
   const inferredLabels = inferSensitivityLabels(
@@ -129,6 +132,23 @@ export function runPolicyGuard(
     volume: { ...(input.volume ?? {}) },
     security_context: securityContext
   };
+  const matchedFileRule = matchFileRule(context.resource_paths, fileRules);
+  const fileRuleReasonCodes = matchedFileRule
+    ? matchedFileRule.reason_codes?.length
+      ? [...matchedFileRule.reason_codes]
+      : [defaultFileRuleReasonCode(matchedFileRule.decision)]
+    : [];
+
+  if (matchedFileRule && matchedFileRule.decision !== "challenge") {
+    return {
+      mutated_payload: mutatedPayload,
+      decision: matchedFileRule.decision,
+      decision_source: "file_rule",
+      reason_codes: fileRuleReasonCodes,
+      sanitization_actions: [],
+      security_context: securityContext,
+    };
+  }
 
   if (input.approval_id) {
     const approval = approvals.getApprovalStatus(input.approval_id);
@@ -165,14 +185,22 @@ export function runPolicyGuard(
     }
   }
 
-  const matches = ruleEngine.match(context);
-  const outcome = decisionEngine.evaluate(context, matches);
+  const matches = matchedFileRule ? [] : ruleEngine.match(context);
+  const outcome = matchedFileRule
+    ? {
+        decision: matchedFileRule.decision,
+        decision_source: "file_rule" as const,
+        reason_codes: fileRuleReasonCodes,
+        matched_rules: [],
+        challenge_ttl_seconds: decisionEngine.config.defaults.approval_ttl_seconds,
+      }
+    : decisionEngine.evaluate(context, matches);
 
   let approval: ApprovalRecord | undefined;
   if (outcome.decision === "challenge") {
     const requestOptions = {
       reason_codes: outcome.reason_codes,
-      rule_ids: outcome.matched_rules.map((rule) => rule.rule_id),
+      rule_ids: matchedFileRule ? [`file_rule:${matchedFileRule.id}`] : outcome.matched_rules.map((rule) => rule.rule_id),
       ...(outcome.challenge_ttl_seconds !== undefined ? { ttl_seconds: outcome.challenge_ttl_seconds } : {}),
       ...(outcome.approval_requirements ? { approval_requirements: outcome.approval_requirements } : {}),
     };

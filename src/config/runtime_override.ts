@@ -5,9 +5,11 @@ import {
   hydrateSensitivePathConfig,
   normalizeSensitivePathStrategyOverride,
 } from "../domain/services/sensitive_path_registry.ts";
+import { normalizeFileRules } from "../domain/services/file_rule_registry.ts";
 import type {
   AccountPolicyRecord,
   DlpConfig,
+  FileRule,
   PolicyRule,
   SafeClawConfig,
   SensitivePathStrategyOverride,
@@ -22,6 +24,7 @@ export type RuntimeOverride = {
   policies?: PolicyRule[] | undefined;
   account_policies?: AccountPolicyRecord[] | undefined;
   sensitivity?: SensitivePathStrategyOverride | undefined;
+  file_rules?: FileRule[] | undefined;
   dlp?: (Partial<Omit<DlpConfig, "patterns">> & { patterns?: DlpConfig["patterns"]; }) | undefined;
 };
 
@@ -56,7 +59,8 @@ export function applyRuntimeOverride(base: SafeClawConfig, override: RuntimeOver
       patterns: override.dlp?.patterns ?? base.dlp.patterns
     },
     policies: override.policies ?? base.policies,
-    sensitivity: applySensitivePathStrategyOverride(baseSensitivity, normalizeSensitivePathStrategyOverride(override.sensitivity))
+    sensitivity: applySensitivePathStrategyOverride(baseSensitivity, normalizeSensitivePathStrategyOverride(override.sensitivity)),
+    file_rules: override.file_rules !== undefined ? normalizeFileRules(override.file_rules) : base.file_rules,
   };
   return validateConfig(merged as unknown as Record<string, unknown>);
 }

@@ -109,6 +109,14 @@ test("live config resolver applies sensitive path strategy overrides on next rea
     const writer = new StrategyStore(dbPath);
     try {
       writer.writeOverride({
+        file_rules: [
+          {
+            id: "user-downloads-allow",
+            directory: "/Users/liuzhuangm4/Downloads",
+            decision: "allow",
+            reason_codes: ["USER_FILE_RULE_ALLOW"]
+          }
+        ],
         sensitivity: {
           disabled_builtin_ids: ["download-staging-downloads-directory"],
           custom_path_rules: [
@@ -135,6 +143,7 @@ test("live config resolver applies sensitive path strategy overrides on next rea
       updated.config.sensitivity.path_rules.some((rule) => rule.id === "custom-sensitive-staging"),
       true,
     );
+    assert.equal(updated.config.file_rules.some((rule) => rule.id === "user-downloads-allow"), true);
   } finally {
     resolver?.close();
     rmSync(tempDir, { recursive: true, force: true });

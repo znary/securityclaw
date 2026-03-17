@@ -6,7 +6,7 @@ export type HookName =
   | "message_sending";
 
 export type Decision = "allow" | "warn" | "challenge" | "block";
-export type DecisionSource = "rule" | "default" | "approval" | "account";
+export type DecisionSource = "rule" | "default" | "approval" | "account" | "file_rule";
 export type FailMode = "open" | "close";
 export type ApprovalStatus = "pending" | "approved" | "rejected" | "expired";
 export type PersistMode = "strict" | "compat";
@@ -191,6 +191,14 @@ export interface SensitivePathStrategyOverride {
   custom_path_rules?: SensitivePathRule[];
 }
 
+export interface FileRule {
+  id: string;
+  directory: string;
+  decision: Decision;
+  reason_codes?: ReasonCode[];
+  updated_at?: string;
+}
+
 export interface DlpFinding {
   pattern_name: string;
   type: PatternType;
@@ -241,6 +249,7 @@ export interface SafeClawConfig {
   hooks: Record<HookName, HookControls>;
   policies: PolicyRule[];
   sensitivity: SensitivePathConfig;
+  file_rules: FileRule[];
   dlp: DlpConfig;
   event_sink: EventSinkConfig;
 }

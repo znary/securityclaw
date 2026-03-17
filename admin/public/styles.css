@@ -1181,9 +1181,22 @@ tbody tr:hover {
 
 .sensitive-path-toolbar {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 220px)) minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) minmax(220px, 320px) auto;
   gap: 12px;
   align-items: end;
+}
+
+.sensitive-path-selected {
+  min-height: 40px;
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: var(--bg-elevated);
+  color: var(--ink);
+  font-family: "IBM Plex Mono", "SFMono-Regular", "Consolas", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-all;
 }
 
 .sensitive-path-field {
@@ -1219,6 +1232,12 @@ tbody tr:hover {
   color: var(--muted);
   font-size: 13px;
   line-height: 1.6;
+}
+
+.sensitive-path-validation {
+  color: var(--bad);
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .sensitive-path-groups,
@@ -1271,6 +1290,11 @@ tbody tr:hover {
   gap: 12px;
 }
 
+.sensitive-path-item.configured {
+  border-color: var(--brand-soft-strong);
+  background: var(--bg-elevated);
+}
+
 .sensitive-path-item.muted {
   opacity: 0.86;
   background: var(--surface-ghost);
@@ -1293,6 +1317,175 @@ tbody tr:hover {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
+}
+
+.file-rule-item-actions {
+  display: grid;
+  grid-template-columns: minmax(160px, 260px) auto;
+  align-items: end;
+  gap: 10px;
+  min-width: 0;
+}
+
+.file-rule-action-field {
+  min-width: 0;
+  width: auto;
+  max-width: none;
+}
+
+.file-rule-item-actions .ghost.small {
+  white-space: nowrap;
+}
+
+.directory-picker-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(8, 15, 28, 0.52);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.directory-picker-card {
+  width: min(980px, 100%);
+  max-height: min(80vh, 760px);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--line);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-float);
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.directory-picker-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.directory-picker-head h4 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.directory-picker-toolbar {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.directory-picker-current {
+  min-height: 36px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: var(--bg-subtle);
+  font-family: "IBM Plex Mono", "SFMono-Regular", "Consolas", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-all;
+}
+
+.directory-picker-roots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.directory-picker-list {
+  display: grid;
+  gap: 8px;
+  max-height: min(52vh, 520px);
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.directory-picker-item {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: var(--bg-subtle);
+  color: var(--ink);
+  display: grid;
+  gap: 3px;
+  text-align: left;
+}
+
+.directory-picker-item:hover {
+  border-color: var(--brand-soft-strong);
+  background: var(--bg-elevated);
+}
+
+.directory-picker-item-name {
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.directory-picker-item-path {
+  color: var(--muted);
+  font-family: "IBM Plex Mono", "SFMono-Regular", "Consolas", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-all;
+}
+
+.confirm-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(8, 15, 28, 0.52);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.confirm-dialog-card {
+  width: min(560px, 100%);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--line);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-float);
+  padding: 16px;
+  display: grid;
+  gap: 12px;
+}
+
+.confirm-dialog-card h4 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.confirm-dialog-text {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.confirm-dialog-path {
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: var(--bg-subtle);
+  font-family: "IBM Plex Mono", "SFMono-Regular", "Consolas", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-all;
+}
+
+.confirm-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
   flex-wrap: wrap;
 }
 
@@ -1781,6 +1974,38 @@ tbody tr:hover {
 
   .sensitive-path-toolbar {
     grid-template-columns: 1fr;
+  }
+
+  .file-rule-item-actions {
+    width: 100%;
+    grid-template-columns: 1fr;
+  }
+
+  .file-rule-action-field {
+    min-width: 0;
+    max-width: none;
+  }
+
+  .directory-picker-backdrop {
+    padding: 12px;
+  }
+
+  .directory-picker-card {
+    max-height: 86vh;
+    padding: 12px;
+  }
+
+  .directory-picker-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .confirm-dialog-backdrop {
+    padding: 12px;
+  }
+
+  .confirm-dialog-card {
+    width: 100%;
+    padding: 14px;
   }
 
   .toolbar-controls {

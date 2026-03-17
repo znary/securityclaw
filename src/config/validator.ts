@@ -9,6 +9,7 @@ import type {
   SafeClawConfig,
   Severity,
 } from "../types.ts";
+import { normalizeFileRules } from "../domain/services/file_rule_registry.ts";
 import { normalizeSensitivePathRules } from "../domain/services/sensitive_path_registry.ts";
 
 const DEFAULT_HOOKS: Record<HookName, HookControls> = {
@@ -206,6 +207,7 @@ export function validateConfig(raw: Record<string, unknown>): SafeClawConfig {
     sensitivity: {
       path_rules: normalizeSensitivePathRules(rawSensitivity?.path_rules, "builtin")
     },
+    file_rules: normalizeFileRules(raw.file_rules),
     dlp: {
       on_dlp_hit: dlp.on_dlp_hit,
       patterns: dlp.patterns

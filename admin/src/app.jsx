@@ -166,6 +166,7 @@ const CHART_THEME = {
 
 const DECISION_SOURCE_TEXT = {
   rule: { "zh-CN": "规则命中", en: "Rule match" },
+  file_rule: { "zh-CN": "文件规则", en: "File rule" },
   default: { "zh-CN": "默认放行", en: "Default allow" },
   approval: { "zh-CN": "审批放行", en: "Approval grant" },
   account: { "zh-CN": "账号策略", en: "Account policy" }
@@ -260,32 +261,6 @@ const DATA_LABEL_TEXT = {
   browser_secret: { "zh-CN": "浏览器凭据", en: "Browser Secrets" },
   media: { "zh-CN": "媒体资料", en: "Media" }
 };
-
-const SENSITIVE_PATH_LABEL_TEXT = {
-  credential: { "zh-CN": "凭据目录", en: "Credential Stores" },
-  personal_content: { "zh-CN": "个人内容", en: "Personal Content" },
-  download_staging: { "zh-CN": "下载暂存区", en: "Download Staging" },
-  browser_profile: { "zh-CN": "浏览器资料", en: "Browser Profiles" },
-  browser_secret_store: { "zh-CN": "浏览器密钥库", en: "Browser Secret Stores" },
-  communication_store: { "zh-CN": "通信存储", en: "Communication Stores" }
-};
-
-const SENSITIVE_PATH_MATCH_TYPE_TEXT = {
-  prefix: { "zh-CN": "前缀", en: "Prefix" },
-  glob: { "zh-CN": "Glob", en: "Glob" },
-  regex: { "zh-CN": "正则", en: "Regex" }
-};
-
-const SENSITIVE_PATH_LABEL_OPTIONS = [
-  "credential",
-  "personal_content",
-  "download_staging",
-  "browser_profile",
-  "browser_secret_store",
-  "communication_store"
-];
-
-const SENSITIVE_PATH_MATCH_TYPE_OPTIONS = ["prefix", "glob", "regex"];
 
 const RULE_IMPACT_EXAMPLES = {
   "high-risk-command-block": {
@@ -639,88 +614,108 @@ function extractPolicies(strategyPayload) {
     : [];
 }
 
-function compareSensitivePathRules(left, right) {
-  const sourceCompare = String(left?.source || "custom").localeCompare(String(right?.source || "custom"));
-  if (sourceCompare !== 0) return sourceCompare;
-  const labelCompare = String(left?.asset_label || "").localeCompare(String(right?.asset_label || ""));
-  if (labelCompare !== 0) return labelCompare;
-  const typeCompare = String(left?.match_type || "").localeCompare(String(right?.match_type || ""));
-  if (typeCompare !== 0) return typeCompare;
+function normalizeDirectoryPathKey(value) {
+  if (typeof value !== "string") {
+    return "";
+  }
+  const normalized = value.trim().replace(/\\/g, "/").replace(/\/+$/g, "");
+  return normalized.toLowerCase();
+}
+
+function compareFileRules(left, right) {
+  const byDirectory = String(left?.directory || "").localeCompare(String(right?.directory || ""));
+  if (byDirectory !== 0) return byDirectory;
   return String(left?.id || "").localeCompare(String(right?.id || ""));
 }
 
-function normalizeSensitivePathRule(rule, fallbackSource = "custom") {
+function normalizeFileRule(rule) {
   if (!rule || typeof rule !== "object") {
     return null;
   }
   const id = typeof rule.id === "string" ? rule.id.trim() : "";
-  const assetLabel = typeof rule.asset_label === "string" ? rule.asset_label.trim() : "";
-  const matchType = typeof rule.match_type === "string" ? rule.match_type.trim() : "";
-  const pattern = typeof rule.pattern === "string" ? rule.pattern.trim() : "";
-  const source = rule.source === "builtin" || rule.source === "custom" ? rule.source : fallbackSource;
-  if (!id || !assetLabel || !pattern || !SENSITIVE_PATH_MATCH_TYPE_OPTIONS.includes(matchType)) {
+  const directory = typeof rule.directory === "string" ? rule.directory.trim() : "";
+  const decision = typeof rule.decision === "string" ? rule.decision.trim() : "";
+  if (!id || !directory || !DECISION_OPTIONS.includes(decision)) {
     return null;
   }
   return {
     id,
-    asset_label: assetLabel,
-    match_type: matchType,
-    pattern,
-    source
+    directory,
+    decision,
+    reason_codes: Array.isArray(rule.reason_codes)
+      ? rule.reason_codes.map((entry) => String(entry)).filter(Boolean)
+      : undefined
   };
 }
 
-function normalizeSensitivePathRules(rules, fallbackSource = "custom") {
+function normalizeFileRules(rules) {
   if (!Array.isArray(rules)) {
     return [];
   }
   const deduped = new Map();
   rules.forEach((rule) => {
-    const normalized = normalizeSensitivePathRule(rule, fallbackSource);
+    const normalized = normalizeFileRule(rule);
     if (normalized) {
-      deduped.set(normalized.id, normalized);
+      deduped.set(normalizeDirectoryPathKey(normalized.directory), normalized);
     }
   });
-  return Array.from(deduped.values()).sort(compareSensitivePathRules);
+  return Array.from(deduped.values()).sort(compareFileRules);
 }
 
-function normalizeSensitivePathStrategy(strategy) {
-  const disabledBuiltinIds = Array.isArray(strategy?.disabled_builtin_ids)
-    ? Array.from(
-        new Set(
-          strategy.disabled_builtin_ids
-            .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
-            .filter(Boolean)
-        )
-      ).sort((left, right) => left.localeCompare(right))
-    : [];
-
-  return {
-    effective_path_rules: normalizeSensitivePathRules(strategy?.effective_path_rules ?? strategy?.path_rules, "builtin"),
-    custom_path_rules: normalizeSensitivePathRules(strategy?.custom_path_rules, "custom"),
-    removed_builtin_path_rules: normalizeSensitivePathRules(strategy?.removed_builtin_path_rules, "builtin"),
-    disabled_builtin_ids: disabledBuiltinIds
-  };
+function extractFileRules(strategyPayload) {
+  return normalizeFileRules(strategyPayload?.strategy?.file_rules);
 }
 
-function extractSensitivePathStrategy(strategyPayload) {
-  return normalizeSensitivePathStrategy(strategyPayload?.strategy?.sensitivity);
+function serializeFileRules(rules) {
+  return JSON.stringify(normalizeFileRules(rules));
 }
 
-function serializeSensitivePathStrategy(strategy) {
-  const normalized = normalizeSensitivePathStrategy(strategy);
-  return JSON.stringify({
-    custom_path_rules: normalized.custom_path_rules,
-    disabled_builtin_ids: normalized.disabled_builtin_ids
-  });
+function normalizeDirectoryPickerEntries(entries) {
+  if (!Array.isArray(entries)) {
+    return [];
+  }
+  return entries
+    .map((entry) => {
+      if (!entry || typeof entry !== "object") {
+        return null;
+      }
+      const pathValue = typeof entry.path === "string" ? entry.path.trim() : "";
+      const nameValue = typeof entry.name === "string" ? entry.name.trim() : "";
+      if (!pathValue) {
+        return null;
+      }
+      return {
+        path: pathValue,
+        name: nameValue || pathValue,
+      };
+    })
+    .filter(Boolean);
 }
 
-function sensitivePathLabel(label) {
-  return readLocalized(SENSITIVE_PATH_LABEL_TEXT, label, label || ui("未标记", "Unlabeled"));
+function normalizeDirectoryPickerRoots(entries) {
+  if (!Array.isArray(entries)) {
+    return [];
+  }
+  return Array.from(
+    new Set(
+      entries
+        .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+        .filter(Boolean),
+    ),
+  ).sort((left, right) => left.localeCompare(right));
 }
 
-function sensitivePathMatchTypeLabel(matchType) {
-  return readLocalized(SENSITIVE_PATH_MATCH_TYPE_TEXT, matchType, matchType || ui("未知", "Unknown"));
+function defaultFileRuleReasonCode(decision) {
+  if (decision === "allow") {
+    return "USER_FILE_RULE_ALLOW";
+  }
+  if (decision === "warn") {
+    return "USER_FILE_RULE_WARN";
+  }
+  if (decision === "challenge") {
+    return "USER_FILE_RULE_CHALLENGE";
+  }
+  return "USER_FILE_RULE_BLOCK";
 }
 
 function extractAccountPolicies(accountPayload) {
@@ -1263,15 +1258,22 @@ function App() {
   const [statusPayload, setStatusPayload] = useState(null);
   const [policies, setPolicies] = useState([]);
   const [publishedPolicies, setPublishedPolicies] = useState([]);
-  const [sensitivePathStrategy, setSensitivePathStrategy] = useState(() => normalizeSensitivePathStrategy());
-  const [publishedSensitivePathStrategy, setPublishedSensitivePathStrategy] = useState(() => normalizeSensitivePathStrategy());
+  const [fileRules, setFileRules] = useState([]);
+  const [publishedFileRules, setPublishedFileRules] = useState([]);
+  const [selectedFileDirectory, setSelectedFileDirectory] = useState("");
+  const [newFileRuleDecision, setNewFileRuleDecision] = useState("challenge");
+  const [filePickerOpen, setFilePickerOpen] = useState(false);
+  const [filePickerLoading, setFilePickerLoading] = useState(false);
+  const [filePickerError, setFilePickerError] = useState("");
+  const [filePickerCurrentPath, setFilePickerCurrentPath] = useState("");
+  const [filePickerParentPath, setFilePickerParentPath] = useState("");
+  const [filePickerRoots, setFilePickerRoots] = useState([]);
+  const [filePickerDirectories, setFilePickerDirectories] = useState([]);
+  const [fileRuleDeleteTarget, setFileRuleDeleteTarget] = useState("");
   const [accountPolicies, setAccountPolicies] = useState([]);
   const [publishedAccountPolicies, setPublishedAccountPolicies] = useState([]);
   const [availableSessions, setAvailableSessions] = useState([]);
   const [selectedSessionSubject, setSelectedSessionSubject] = useState("");
-  const [newSensitivePathLabel, setNewSensitivePathLabel] = useState(SENSITIVE_PATH_LABEL_OPTIONS[0]);
-  const [newSensitivePathMatchType, setNewSensitivePathMatchType] = useState(SENSITIVE_PATH_MATCH_TYPE_OPTIONS[0]);
-  const [newSensitivePathPattern, setNewSensitivePathPattern] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -1290,9 +1292,9 @@ function App() {
     () => JSON.stringify(policies) !== JSON.stringify(publishedPolicies),
     [policies, publishedPolicies]
   );
-  const hasPendingSensitivePathChanges = useMemo(
-    () => serializeSensitivePathStrategy(sensitivePathStrategy) !== serializeSensitivePathStrategy(publishedSensitivePathStrategy),
-    [publishedSensitivePathStrategy, sensitivePathStrategy]
+  const hasPendingFileRuleChanges = useMemo(
+    () => serializeFileRules(fileRules) !== serializeFileRules(publishedFileRules),
+    [fileRules, publishedFileRules]
   );
   const hasPendingAccountChanges = useMemo(
     () =>
@@ -1300,7 +1302,7 @@ function App() {
       JSON.stringify(canonicalizeAccountPolicies(publishedAccountPolicies)),
     [accountPolicies, publishedAccountPolicies]
   );
-  const hasPendingChanges = hasPendingRuleChanges || hasPendingSensitivePathChanges || hasPendingAccountChanges;
+  const hasPendingChanges = hasPendingRuleChanges || hasPendingFileRuleChanges || hasPendingAccountChanges;
   const groupedPolicies = useMemo(() => {
     const groups = new Map();
     policies.forEach((policy, index) => {
@@ -1327,39 +1329,14 @@ function App() {
     () => accountPolicies.find((account) => account.is_admin)?.subject || "",
     [accountPolicies]
   );
-  const effectiveSensitivePathRules = useMemo(
-    () => normalizeSensitivePathRules(sensitivePathStrategy.effective_path_rules, "builtin"),
-    [sensitivePathStrategy]
-  );
-  const customSensitivePathRules = useMemo(
-    () => normalizeSensitivePathRules(sensitivePathStrategy.custom_path_rules, "custom"),
-    [sensitivePathStrategy]
-  );
-  const removedBuiltinSensitivePathRules = useMemo(
-    () => normalizeSensitivePathRules(sensitivePathStrategy.removed_builtin_path_rules, "builtin"),
-    [sensitivePathStrategy]
-  );
-  const groupedSensitivePathRules = useMemo(() => {
-    const groups = new Map();
-    effectiveSensitivePathRules.forEach((rule) => {
-      const key = rule.asset_label || "unknown";
-      const list = groups.get(key) || [];
-      list.push(rule);
-      groups.set(key, list);
-    });
-    return Array.from(groups.entries()).sort((left, right) => sensitivePathLabel(left[0]).localeCompare(sensitivePathLabel(right[0]), activeLocale === "zh-CN" ? "zh-CN" : "en-US"));
-  }, [effectiveSensitivePathRules, locale]);
-  const sensitivePathRuleCountsByLabel = useMemo(() => {
-    const counts = new Map();
-    policies.forEach((policy, index) => {
-      toArray(policy?.match?.asset_labels).forEach((label) => {
-        const list = counts.get(label) || [];
-        list.push(policyTitle(policy, index));
-        counts.set(label, list);
-      });
-    });
-    return counts;
-  }, [locale, policies]);
+  const normalizedFileRules = useMemo(() => normalizeFileRules(fileRules), [fileRules]);
+  const selectedDirectoryRuleExists = useMemo(() => {
+    if (!selectedFileDirectory) {
+      return false;
+    }
+    const selectedKey = normalizeDirectoryPathKey(selectedFileDirectory);
+    return normalizedFileRules.some((rule) => normalizeDirectoryPathKey(rule.directory) === selectedKey);
+  }, [normalizedFileRules, selectedFileDirectory]);
   const firstRuleKey = policyEntries[0]?.key || "";
 
   useEffect(() => {
@@ -1484,15 +1461,16 @@ function App() {
       ]);
       setStatusPayload(status);
       const nextPolicies = extractPolicies(strategy);
-      const nextSensitivePathStrategy = extractSensitivePathStrategy(strategy);
+      const nextFileRules = extractFileRules(strategy);
       const nextAccountPolicies = extractAccountPolicies(accounts);
       setPublishedPolicies(nextPolicies);
-      setPublishedSensitivePathStrategy(nextSensitivePathStrategy);
+      setPublishedFileRules(nextFileRules);
       setPublishedAccountPolicies(nextAccountPolicies);
       setAvailableSessions(extractChatSessions(accounts));
       if (syncRules === true) {
         setPolicies(clone(nextPolicies));
-        setSensitivePathStrategy(clone(nextSensitivePathStrategy));
+        setFileRules(clone(nextFileRules));
+        setSelectedFileDirectory((current) => current || nextFileRules[0]?.directory || "");
       }
       if (syncAccounts === true) {
         setAccountPolicies(clone(nextAccountPolicies));
@@ -1519,6 +1497,31 @@ function App() {
     }
   }, [decisionFilter, decisionPage]);
 
+  const loadDirectoryPicker = useCallback(async (targetPath = "") => {
+    setFilePickerLoading(true);
+    setFilePickerError("");
+    try {
+      const trimmedPath = typeof targetPath === "string" ? targetPath.trim() : "";
+      const query = trimmedPath ? `?path=${encodeURIComponent(trimmedPath)}` : "";
+      const payload = await getJson(`/api/file-rule/directories${query}`);
+      const currentPath = typeof payload?.current_path === "string" ? payload.current_path.trim() : "";
+      const parentPath = typeof payload?.parent_path === "string" ? payload.parent_path.trim() : "";
+      setFilePickerCurrentPath(currentPath);
+      setFilePickerParentPath(parentPath);
+      setFilePickerRoots(normalizeDirectoryPickerRoots(payload?.roots));
+      setFilePickerDirectories(normalizeDirectoryPickerEntries(payload?.directories));
+    } catch (loadError) {
+      setFilePickerError(String(loadError));
+    } finally {
+      setFilePickerLoading(false);
+    }
+  }, []);
+
+  const openDirectoryPicker = useCallback(() => {
+    setFilePickerOpen(true);
+    void loadDirectoryPicker(selectedFileDirectory || normalizedFileRules[0]?.directory || "");
+  }, [loadDirectoryPicker, normalizedFileRules, selectedFileDirectory]);
+
   useEffect(() => {
     void loadData({ syncRules: true, syncAccounts: true, silent: false });
   }, [loadData]);
@@ -1526,6 +1529,23 @@ function App() {
   useEffect(() => {
     void loadDecisionPage({ silent: false });
   }, [loadDecisionPage]);
+
+  useEffect(() => {
+    if (!filePickerOpen && !fileRuleDeleteTarget) {
+      return undefined;
+    }
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") {
+        if (fileRuleDeleteTarget) {
+          setFileRuleDeleteTarget("");
+          return;
+        }
+        setFilePickerOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [filePickerOpen, fileRuleDeleteTarget]);
 
   useEffect(() => {
     if (hasPendingChanges || saving) {
@@ -1656,12 +1676,15 @@ function App() {
   const trendTotalCount = trendTotals.reduce((sum, value) => sum + value, 0);
   const trendRiskCount = trendRisks.reduce((sum, value) => sum + value, 0);
 
-  const saveStrategy = useCallback(async (nextPolicies, nextSensitivePaths) => {
+  const saveStrategy = useCallback(async (nextPolicies, nextFileRules) => {
     const normalizedPolicies = nextPolicies.map((policy) => ({ ...policy, enabled: true }));
-    const normalizedSensitivePathStrategy = normalizeSensitivePathStrategy(nextSensitivePaths);
+    const normalizedFileRules = normalizeFileRules(nextFileRules).map((rule) => ({
+      ...rule,
+      reason_codes: rule.reason_codes?.length ? rule.reason_codes : [defaultFileRuleReasonCode(rule.decision)],
+    }));
     setSaving(true);
     setError("");
-    setMessage(ui("规则与敏感路径自动保存中...", "Saving policy and sensitive path changes..."));
+    setMessage(ui("规则与文件规则自动保存中...", "Saving policy and file rule changes..."));
     try {
       const response = await fetch("/api/strategy", {
         method: "PUT",
@@ -1672,10 +1695,7 @@ function App() {
         },
         body: JSON.stringify({
           policies: normalizedPolicies,
-          sensitivity: {
-            custom_path_rules: normalizedSensitivePathStrategy.custom_path_rules,
-            disabled_builtin_ids: normalizedSensitivePathStrategy.disabled_builtin_ids
-          }
+          file_rules: normalizedFileRules
         })
       });
       const payload = await response.json();
@@ -1686,11 +1706,11 @@ function App() {
       const details = `${payload.message || ""}${suffix}`.trim();
       setMessage(
         details
-          ? `${ui("规则与敏感路径已自动保存。", "Policies and sensitive paths saved automatically.")} ${details}`
-          : ui("规则与敏感路径已自动保存。", "Policies and sensitive paths saved automatically.")
+          ? `${ui("规则与文件规则已自动保存。", "Policies and file rules saved automatically.")} ${details}`
+          : ui("规则与文件规则已自动保存。", "Policies and file rules saved automatically.")
       );
       setPublishedPolicies(clone(normalizedPolicies));
-      setPublishedSensitivePathStrategy(clone(normalizedSensitivePathStrategy));
+      setPublishedFileRules(clone(normalizedFileRules));
       await loadData({ syncRules: false, syncAccounts: false, silent: true });
     } catch (saveError) {
       setError(String(saveError));
@@ -1735,20 +1755,20 @@ function App() {
   }, [loadData]);
 
   useEffect(() => {
-    if (loading || saving || (!hasPendingRuleChanges && !hasPendingSensitivePathChanges)) {
+    if (loading || saving || (!hasPendingRuleChanges && !hasPendingFileRuleChanges)) {
       return undefined;
     }
     setMessage(
       ui(
-        "检测到规则或敏感路径变更，正在自动保存...",
-        "Rule or sensitive path changes detected. Saving automatically..."
+        "检测到规则或文件规则变更，正在自动保存...",
+        "Rule or file rule changes detected. Saving automatically..."
       )
     );
     const timer = setTimeout(() => {
-      void saveStrategy(policies, sensitivePathStrategy);
+      void saveStrategy(policies, fileRules);
     }, 500);
     return () => clearTimeout(timer);
-  }, [hasPendingRuleChanges, hasPendingSensitivePathChanges, loading, policies, saveStrategy, saving, sensitivePathStrategy]);
+  }, [fileRules, hasPendingFileRuleChanges, hasPendingRuleChanges, loading, policies, saveStrategy, saving]);
 
   useEffect(() => {
     if (loading || saving || !hasPendingAccountChanges) {
@@ -1910,51 +1930,85 @@ function App() {
     setAccountPolicies((current) => current.filter((account) => account.subject !== subject));
   }
 
-  function addSensitivePathRule() {
-    const pattern = newSensitivePathPattern.trim();
-    if (!pattern) {
+  function setDirectoryFileRuleDecision(directory, decision) {
+    const normalizedDirectory = typeof directory === "string" ? directory.trim() : "";
+    const normalizedDecision = typeof decision === "string" ? decision.trim() : "";
+    if (!normalizedDirectory) {
       return;
     }
-    const customRule = {
-      id: `custom-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
-      asset_label: newSensitivePathLabel,
-      match_type: newSensitivePathMatchType,
-      pattern,
-      source: "custom"
-    };
-    setSensitivePathStrategy((current) => normalizeSensitivePathStrategy({
-      ...current,
-      effective_path_rules: [...toArray(current.effective_path_rules), customRule],
-      custom_path_rules: [...toArray(current.custom_path_rules), customRule]
-    }));
-    setNewSensitivePathPattern("");
-  }
-
-  function removeSensitivePathRule(rule) {
-    setSensitivePathStrategy((current) => {
-      if (rule.source === "builtin") {
-        return normalizeSensitivePathStrategy({
-          ...current,
-          effective_path_rules: toArray(current.effective_path_rules).filter((item) => item.id !== rule.id),
-          removed_builtin_path_rules: [...toArray(current.removed_builtin_path_rules), rule],
-          disabled_builtin_ids: [...toArray(current.disabled_builtin_ids), rule.id]
-        });
+    setFileRules((current) => {
+      const normalizedCurrent = normalizeFileRules(current);
+      const key = normalizeDirectoryPathKey(normalizedDirectory);
+      const existing = normalizedCurrent.find((rule) => normalizeDirectoryPathKey(rule.directory) === key);
+      if (!normalizedDecision) {
+        return normalizedCurrent.filter((rule) => normalizeDirectoryPathKey(rule.directory) !== key);
       }
-      return normalizeSensitivePathStrategy({
-        ...current,
-        effective_path_rules: toArray(current.effective_path_rules).filter((item) => item.id !== rule.id),
-        custom_path_rules: toArray(current.custom_path_rules).filter((item) => item.id !== rule.id)
-      });
+      if (!DECISION_OPTIONS.includes(normalizedDecision)) {
+        return normalizedCurrent;
+      }
+      const nextRule = {
+        id: existing?.id || `file-rule-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+        directory: normalizedDirectory,
+        decision: normalizedDecision,
+        reason_codes: [defaultFileRuleReasonCode(normalizedDecision)],
+      };
+      const others = normalizedCurrent.filter((rule) => normalizeDirectoryPathKey(rule.directory) !== key);
+      return normalizeFileRules([...others, nextRule]);
     });
   }
 
-  function restoreSensitivePathRule(rule) {
-    setSensitivePathStrategy((current) => normalizeSensitivePathStrategy({
-      ...current,
-      effective_path_rules: [...toArray(current.effective_path_rules), rule],
-      removed_builtin_path_rules: toArray(current.removed_builtin_path_rules).filter((item) => item.id !== rule.id),
-      disabled_builtin_ids: toArray(current.disabled_builtin_ids).filter((item) => item !== rule.id)
-    }));
+  function applySelectedFileRule() {
+    if (!selectedFileDirectory) {
+      return;
+    }
+    if (selectedDirectoryRuleExists) {
+      setMessage(
+        ui(
+          "该目录已存在规则，请在下方规则列表里调整处理方式。",
+          "A rule already exists for this directory. Edit the action in the rule list below."
+        )
+      );
+      return;
+    }
+    setDirectoryFileRuleDecision(selectedFileDirectory, newFileRuleDecision);
+  }
+
+  function removeFileRule(directory) {
+    setDirectoryFileRuleDecision(directory, "");
+  }
+
+  function requestRemoveFileRule(directory) {
+    const normalizedDirectory = typeof directory === "string" ? directory.trim() : "";
+    if (!normalizedDirectory) {
+      return;
+    }
+    setFileRuleDeleteTarget(normalizedDirectory);
+  }
+
+  function cancelRemoveFileRule() {
+    setFileRuleDeleteTarget("");
+  }
+
+  function confirmRemoveFileRule() {
+    if (!fileRuleDeleteTarget) {
+      return;
+    }
+    removeFileRule(fileRuleDeleteTarget);
+    setFileRuleDeleteTarget("");
+  }
+
+  function closeDirectoryPicker() {
+    setFilePickerOpen(false);
+    setFilePickerError("");
+  }
+
+  function chooseCurrentDirectory() {
+    if (!filePickerCurrentPath) {
+      return;
+    }
+    setSelectedFileDirectory(filePickerCurrentPath);
+    setFilePickerOpen(false);
+    setFilePickerError("");
   }
 
   const tabCounts = {
@@ -2020,8 +2074,6 @@ function App() {
       icon: <ToolbarMonogram text="A" />
     }
   ];
-  const canAddSensitivePath = Boolean(newSensitivePathPattern.trim());
-
   return (
     <div className="app">
       <section className="workspace card">
@@ -2421,146 +2473,196 @@ function App() {
                 <div className="rule-meta">
                   <span className="meta-pill">{ui("分组", "Groups")} {groupedPolicies.length}</span>
                   <span className="meta-pill">{ui("规则", "Rules")} {policies.length}</span>
-                  <span className="meta-pill">{ui("敏感路径", "Sensitive Paths")} {effectiveSensitivePathRules.length}</span>
-                  {removedBuiltinSensitivePathRules.length > 0 ? (
-                    <span className="meta-pill meta-pill-highlight">{ui("已移除内置", "Removed Built-ins")} {removedBuiltinSensitivePathRules.length}</span>
-                  ) : null}
+                  <span className="meta-pill">{ui("文件规则", "File Rules")} {normalizedFileRules.length}</span>
                 </div>
               </div>
 
-              <section className="sensitive-path-panel" aria-label={ui("敏感路径策略", "Sensitive path strategy")}>
+              <section className="sensitive-path-panel" aria-label={ui("文件规则", "File rules")}>
                 <div className="sensitive-path-head">
                   <div>
-                    <span className="eyebrow">{ui("敏感路径注册表", "Sensitive Path Registry")}</span>
-                    <h3>{ui("哪些路径会被视为敏感", "Which paths are treated as sensitive")}</h3>
+                    <span className="eyebrow">{ui("文件规则", "File Rules")}</span>
+                    <h3>{ui("按目录定义最高优先级处理动作", "Set top-priority actions by directory")}</h3>
                     <p className="sensitive-path-intro">
                       {ui(
-                        "路径会先在这里映射成资产标签，再由下面的规则决定提醒、审批或拦截。内置项可删除，自定义项可随时补充。",
-                        "Paths are mapped to asset labels here first, then the rules below decide whether to warn, challenge, or block. Built-ins can be removed and custom entries can be added at any time."
+                        "这里只需要选择目录和处理方式，不需要选择标签或匹配方式。文件规则优先级最高，设置为放行后后续策略不会再拦截。",
+                        "Choose a directory and a handling action only. No labels or match types are required. File rules are top priority, and allow bypasses later blocking policies."
                       )}
                     </p>
                   </div>
                   <div className="rule-meta">
-                    <span className="meta-pill">{ui("自定义", "Custom")} {customSensitivePathRules.length}</span>
-                    <span className="meta-pill">{ui("生效", "Effective")} {effectiveSensitivePathRules.length}</span>
+                    <span className="meta-pill">{ui("规则数", "Rules")} {normalizedFileRules.length}</span>
+                    <span className="meta-pill">{selectedFileDirectory ? ui("已选择目录", "Directory Selected") : ui("未选择目录", "No Directory Selected")}</span>
                   </div>
                 </div>
 
                 <div className="sensitive-path-toolbar">
-                  <label className="sensitive-path-field">
-                    <span>{ui("敏感标签", "Sensitive label")}</span>
-                    <select value={newSensitivePathLabel} onChange={(event) => setNewSensitivePathLabel(event.target.value)}>
-                      {SENSITIVE_PATH_LABEL_OPTIONS.map((label) => (
-                        <option key={label} value={label}>{sensitivePathLabel(label)}</option>
+                  <button className="ghost" type="button" onClick={openDirectoryPicker}>
+                    {ui("选择目录", "Choose Directory")}
+                  </button>
+
+                  <div className="sensitive-path-selected" title={selectedFileDirectory || undefined}>
+                    {selectedFileDirectory || ui("尚未选择目录", "No directory selected yet")}
+                  </div>
+
+                  <label className="sensitive-path-field file-rule-action-field">
+                    <span>{ui("处理方式", "Action")}</span>
+                    <select value={newFileRuleDecision} onChange={(event) => setNewFileRuleDecision(event.target.value)}>
+                      {DECISION_OPTIONS.map((decisionOption) => (
+                        <option key={decisionOption} value={decisionOption}>{decisionLabel(decisionOption)}</option>
                       ))}
                     </select>
                   </label>
 
-                  <label className="sensitive-path-field">
-                    <span>{ui("匹配方式", "Match type")}</span>
-                    <select value={newSensitivePathMatchType} onChange={(event) => setNewSensitivePathMatchType(event.target.value)}>
-                      {SENSITIVE_PATH_MATCH_TYPE_OPTIONS.map((matchType) => (
-                        <option key={matchType} value={matchType}>{sensitivePathMatchTypeLabel(matchType)}</option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label className="sensitive-path-field sensitive-path-field-wide">
-                    <span>{ui("路径模式", "Path pattern")}</span>
-                    <input
-                      type="text"
-                      value={newSensitivePathPattern}
-                      placeholder={ui("~/Downloads/** 或 ^/srv/secrets(?:/|$)", "~/Downloads/** or ^/srv/secrets(?:/|$)")}
-                      onChange={(event) => setNewSensitivePathPattern(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter" && canAddSensitivePath) {
-                          event.preventDefault();
-                          addSensitivePathRule();
-                        }
-                      }}
-                    />
-                  </label>
-
-                  <button className="primary" type="button" disabled={!canAddSensitivePath} onClick={addSensitivePathRule}>
-                    {ui("添加路径", "Add Path")}
+                  <button
+                    className="primary"
+                    type="button"
+                    disabled={!selectedFileDirectory || selectedDirectoryRuleExists}
+                    onClick={applySelectedFileRule}
+                  >
+                    {ui("添加", "Add")}
                   </button>
                 </div>
 
+                {selectedDirectoryRuleExists ? (
+                  <div className="sensitive-path-validation">
+                    {ui(
+                      "当前目录已存在规则。若需调整，请在下方“已配置文件规则”列表中修改。",
+                      "A rule already exists for this directory. Edit it in the configured file rules list below."
+                    )}
+                  </div>
+                ) : null}
+
                 <div className="sensitive-path-note">
                   {ui(
-                    "支持前缀、glob 和正则。删除内置项只会取消这条路径到敏感标签的映射，不会直接修改规则定义本身。",
-                    "Supports prefix, glob, and regex. Removing a built-in only disables that path-to-label mapping and does not rewrite the rule definitions themselves."
+                    "通过“选择目录”打开目录浏览器，定位到目标目录后点“选择当前目录”。“添加”只创建新规则，已存在规则请在下方列表中调整。若目录设为 allow，后续策略不会再拦截。",
+                    "Use Choose Directory to open the browser, navigate to the target folder, then select current directory. Add only creates new rules; edit existing ones in the list below. If a directory is set to allow, downstream policies will not block it."
                   )}
                 </div>
 
-                {groupedSensitivePathRules.length === 0 ? (
-                  <div className="chart-empty">{ui("当前没有生效的敏感路径。", "There are no active sensitive path entries.")}</div>
+                {normalizedFileRules.length === 0 ? (
+                  <div className="chart-empty">{ui("当前没有配置文件规则。", "No file rules configured yet.")}</div>
                 ) : (
-                  <div className="sensitive-path-groups">
-                    {groupedSensitivePathRules.map(([label, rules]) => {
-                      const linkedRules = toArray(sensitivePathRuleCountsByLabel.get(label));
+                  <div className="sensitive-path-list">
+                    {normalizedFileRules.map((rule) => {
                       return (
-                        <section key={label} className="sensitive-path-group">
-                          <div className="sensitive-path-group-head">
-                            <div>
-                              <h4>{sensitivePathLabel(label)}</h4>
-                              <p>
-                                {linkedRules.length > 0
-                                  ? ui(`关联规则 ${linkedRules.length} 条`, `${linkedRules.length} related rules`)
-                                  : ui("当前没有规则直接引用这个标签", "No rules reference this label directly")}
-                              </p>
+                        <article key={rule.id} className="sensitive-path-item configured">
+                          <div className="sensitive-path-item-main">
+                            <div className="sensitive-path-item-pattern">{rule.directory}</div>
+                            <div className="sensitive-path-item-tags">
+                              <span className={`tag ${rule.decision}`}>{decisionLabel(rule.decision)}</span>
                             </div>
-                            <span className="meta-pill">{ui("条目", "Entries")} {rules.length}</span>
                           </div>
-
-                          <div className="sensitive-path-list">
-                            {rules.map((rule) => (
-                              <article key={rule.id} className="sensitive-path-item">
-                                <div className="sensitive-path-item-main">
-                                  <div className="sensitive-path-item-pattern">{rule.pattern}</div>
-                                  <div className="sensitive-path-item-tags">
-                                    <span className="tag meta-tag">{sensitivePathMatchTypeLabel(rule.match_type)}</span>
-                                    <span className="tag meta-tag">{rule.source === "builtin" ? ui("内置", "Built-in") : ui("自定义", "Custom")}</span>
-                                  </div>
-                                </div>
-                                <button className="ghost small" type="button" onClick={() => removeSensitivePathRule(rule)}>
-                                  {ui("删除", "Remove")}
-                                </button>
-                              </article>
-                            ))}
+                          <div className="file-rule-item-actions">
+                            <label className="sensitive-path-field file-rule-action-field">
+                              <span>{ui("处理方式", "Action")}</span>
+                              <select
+                                value={rule.decision}
+                                onChange={(event) => setDirectoryFileRuleDecision(rule.directory, event.target.value)}
+                              >
+                                {DECISION_OPTIONS.map((decisionOption) => (
+                                  <option key={decisionOption} value={decisionOption}>{decisionLabel(decisionOption)}</option>
+                                ))}
+                              </select>
+                            </label>
+                            <button className="ghost small" type="button" onClick={() => requestRemoveFileRule(rule.directory)}>
+                              {ui("删除", "Remove")}
+                            </button>
                           </div>
-                        </section>
+                        </article>
                       );
                     })}
                   </div>
                 )}
 
-                {removedBuiltinSensitivePathRules.length > 0 ? (
-                  <section className="sensitive-path-removed">
-                    <div className="sensitive-path-group-head">
-                      <div>
-                        <h4>{ui("已移除的内置项", "Removed built-ins")}</h4>
-                        <p>{ui("这些路径暂时不会再被判定成敏感路径。", "These paths are temporarily excluded from sensitive path detection.")}</p>
+                {filePickerOpen ? (
+                  <div className="directory-picker-backdrop" role="dialog" aria-modal="true" aria-label={ui("目录选择器", "Directory picker")} onClick={closeDirectoryPicker}>
+                    <div className="directory-picker-card" onClick={(event) => event.stopPropagation()}>
+                      <div className="directory-picker-head">
+                        <h4>{ui("选择目录", "Choose Directory")}</h4>
+                        <button className="ghost small" type="button" onClick={closeDirectoryPicker}>
+                          {ui("关闭", "Close")}
+                        </button>
                       </div>
-                      <span className="meta-pill">{ui("已移除", "Removed")} {removedBuiltinSensitivePathRules.length}</span>
+                      <div className="directory-picker-toolbar">
+                        <button
+                          className="ghost small"
+                          type="button"
+                          disabled={!filePickerParentPath || filePickerLoading}
+                          onClick={() => void loadDirectoryPicker(filePickerParentPath)}
+                        >
+                          {ui("上级目录", "Up")}
+                        </button>
+                        <div className="directory-picker-current">{filePickerCurrentPath || "-"}</div>
+                        <button className="primary small" type="button" disabled={!filePickerCurrentPath} onClick={chooseCurrentDirectory}>
+                          {ui("选择当前目录", "Select Current Directory")}
+                        </button>
+                      </div>
+
+                      {filePickerRoots.length > 0 ? (
+                        <div className="directory-picker-roots">
+                          {filePickerRoots.map((root) => (
+                            <button
+                              key={root}
+                              className="ghost small"
+                              type="button"
+                              onClick={() => void loadDirectoryPicker(root)}
+                              disabled={filePickerLoading}
+                            >
+                              {root}
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+
+                      {filePickerError ? <div className="sensitive-path-validation">{filePickerError}</div> : null}
+
+                      <div className="directory-picker-list">
+                        {filePickerLoading ? (
+                          <div className="chart-empty">{ui("目录加载中...", "Loading directories...")}</div>
+                        ) : filePickerDirectories.length === 0 ? (
+                          <div className="chart-empty">{ui("当前目录没有可进入的子目录。", "No child directories in current path.")}</div>
+                        ) : (
+                          filePickerDirectories.map((entry) => (
+                            <button
+                              key={entry.path}
+                              className="directory-picker-item"
+                              type="button"
+                              onClick={() => void loadDirectoryPicker(entry.path)}
+                            >
+                              <span className="directory-picker-item-name">{entry.name}</span>
+                              <span className="directory-picker-item-path">{entry.path}</span>
+                            </button>
+                          ))
+                        )}
+                      </div>
                     </div>
-                    <div className="sensitive-path-list">
-                      {removedBuiltinSensitivePathRules.map((rule) => (
-                        <article key={rule.id} className="sensitive-path-item muted">
-                          <div className="sensitive-path-item-main">
-                            <div className="sensitive-path-item-pattern">{rule.pattern}</div>
-                            <div className="sensitive-path-item-tags">
-                              <span className="tag meta-tag">{sensitivePathLabel(rule.asset_label)}</span>
-                              <span className="tag meta-tag">{sensitivePathMatchTypeLabel(rule.match_type)}</span>
-                            </div>
-                          </div>
-                          <button className="ghost small" type="button" onClick={() => restoreSensitivePathRule(rule)}>
-                            {ui("恢复", "Restore")}
-                          </button>
-                        </article>
-                      ))}
+                  </div>
+                ) : null}
+
+                {fileRuleDeleteTarget ? (
+                  <div
+                    className="confirm-dialog-backdrop"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-label={ui("删除确认", "Delete confirmation")}
+                    onClick={cancelRemoveFileRule}
+                  >
+                    <div className="confirm-dialog-card" onClick={(event) => event.stopPropagation()}>
+                      <h4>{ui("确认删除这条文件规则？", "Delete this file rule?")}</h4>
+                      <p className="confirm-dialog-text">
+                        {ui("删除后该目录将不再应用用户文件规则，会回落到后续策略判断。", "After deletion, this directory will no longer use the user file rule and will fall back to downstream policies.")}
+                      </p>
+                      <div className="confirm-dialog-path">{fileRuleDeleteTarget}</div>
+                      <div className="confirm-dialog-actions">
+                        <button className="ghost small" type="button" onClick={cancelRemoveFileRule}>
+                          {ui("取消", "Cancel")}
+                        </button>
+                        <button className="primary small" type="button" onClick={confirmRemoveFileRule}>
+                          {ui("确认删除", "Delete")}
+                        </button>
+                      </div>
                     </div>
-                  </section>
+                  </div>
                 ) : null}
               </section>
 

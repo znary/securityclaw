@@ -1,6 +1,6 @@
 import http from "node:http";
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -15,6 +15,7 @@ import { ConfigManager } from "../src/config/loader.ts";
 import { applyRuntimeOverride, type RuntimeOverride } from "../src/config/runtime_override.ts";
 import { StrategyStore } from "../src/config/strategy_store.ts";
 import { AccountPolicyEngine } from "../src/domain/services/account_policy_engine.ts";
+import { normalizeFileRules } from "../src/domain/services/file_rule_registry.ts";
 import {
   hydrateSensitivePathConfig,
   listRemovedBuiltinSensitivePathRules,
@@ -393,6 +394,72 @@ function readSensitivePathStrategy(
   };
 }
 
+function isExistingDirectory(value: string): boolean {
+  try {
+    return statSync(value).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function listFileRuleDirectoryOptions(existingDirectories: string[] = []): string[] {
+  return Array.from(new Set(existingDirectories.map((entry) => path.normalize(entry))))
+    .filter((entry) => path.isAbsolute(entry))
+    .filter((entry) => isExistingDirectory(entry))
+    .sort((left, right) => left.localeCompare(right));
+}
+
+function normalizeBrowsePath(candidate: string | null | undefined, fallback: string): string {
+  if (!candidate || typeof candidate !== "string") {
+    return fallback;
+  }
+  const trimmed = candidate.trim();
+  if (!trimmed) {
+    return fallback;
+  }
+  const expanded = trimmed === "~"
+    ? os.homedir()
+    : trimmed.startsWith("~/")
+      ? path.join(os.homedir(), trimmed.slice(2))
+      : trimmed;
+  if (!path.isAbsolute(expanded)) {
+    return fallback;
+  }
+  const normalized = path.normalize(expanded);
+  return isExistingDirectory(normalized) ? normalized : fallback;
+}
+
+function listDirectoryChildren(absolutePath: string): Array<{ name: string; path: string }> {
+  const entries = readdirSync(absolutePath, { withFileTypes: true });
+  const directories: Array<{ name: string; path: string }> = [];
+  entries.forEach((entry) => {
+    const childPath = path.join(absolutePath, entry.name);
+    if (entry.isDirectory() || (entry.isSymbolicLink() && isExistingDirectory(childPath))) {
+      directories.push({
+        name: entry.name,
+        path: path.normalize(childPath),
+      });
+    }
+  });
+  return directories
+    .sort((left, right) => left.name.localeCompare(right.name))
+    .slice(0, 300);
+}
+
+function listDirectoryBrowseRoots(existingDirectories: string[] = []): string[] {
+  const homeDir = path.normalize(os.homedir());
+  const homeRoot = path.parse(homeDir).root || "/";
+  const extras = Array.from(
+    new Set(existingDirectories.map((entry) => path.normalize(entry))),
+  )
+    .filter((entry) => path.isAbsolute(entry))
+    .filter((entry) => isExistingDirectory(entry))
+    .filter((entry) => entry !== homeDir && entry !== homeRoot)
+    .sort((left, right) => left.localeCompare(right));
+  const orderedRoots = [homeDir, ...(homeRoot !== homeDir ? [homeRoot] : []), ...extras];
+  return Array.from(new Set(orderedRoots));
+}
+
 function handleApi(
   req: http.IncomingMessage,
   res: http.ServerResponse,
@@ -419,6 +486,7 @@ function handleApi(
           environment: effective.environment,
           policy_version: effective.policy_version,
           policy_count: effective.policies.length,
+          file_rule_count: effective.file_rules.length,
           event_sink_enabled: Boolean(effective.event_sink.webhook_url),
           strategy_loaded: Boolean(override)
         }
@@ -438,6 +506,26 @@ function handleApi(
     return;
   }
 
+  if (req.method === "GET" && url.pathname === "/api/file-rule/directories") {
+    try {
+      const { effective } = readEffectivePolicy(runtime, strategyStore);
+      const existingRuleDirectories = listFileRuleDirectoryOptions(effective.file_rules.map((rule) => rule.directory));
+      const roots = listDirectoryBrowseRoots(existingRuleDirectories);
+      const fallbackPath = roots[0] ?? path.normalize(os.homedir());
+      const currentPath = normalizeBrowsePath(url.searchParams.get("path"), fallbackPath);
+      const parentPath = path.dirname(currentPath);
+      sendJson(res, 200, {
+        current_path: currentPath,
+        ...(parentPath && parentPath !== currentPath ? { parent_path: parentPath } : {}),
+        roots,
+        directories: listDirectoryChildren(currentPath),
+      });
+    } catch (error) {
+      sendJson(res, 500, { error: String(error) });
+    }
+    return;
+  }
+
   if (req.method === "GET" && url.pathname === "/api/strategy") {
     try {
       const { base, effective, override } = readEffectivePolicy(runtime, strategyStore);
@@ -451,6 +539,8 @@ function handleApi(
           environment: effective.environment,
           policy_version: effective.policy_version,
           policies: effective.policies,
+          file_rules: effective.file_rules,
+          file_rule_directories: listFileRuleDirectoryOptions(effective.file_rules.map((rule) => rule.directory)),
           sensitivity: {
             ...readSensitivePathStrategy(base, override),
             effective_path_rules: effective.sensitivity.path_rules,
@@ -489,6 +579,10 @@ function handleApi(
         const nextSensitivity = hasSensitivity
           ? normalizeSensitivePathStrategyOverride(body.sensitivity)
           : current.sensitivity;
+        const hasFileRules = Object.prototype.hasOwnProperty.call(body, "file_rules");
+        const nextFileRules = hasFileRules
+          ? normalizeFileRules(body.file_rules)
+          : normalizeFileRules(current.file_rules);
 
         const nextOverride: RuntimeOverride = {
           ...current,
@@ -501,6 +595,7 @@ function handleApi(
             Array.isArray(body.policies)
               ? (body.policies as RuntimeOverride["policies"])
               : current.policies,
+          ...(hasFileRules ? { file_rules: nextFileRules } : {}),
           ...(hasSensitivity ? { sensitivity: nextSensitivity } : {})
         };
 
@@ -520,6 +615,7 @@ function handleApi(
             environment: validated.environment,
             policy_version: validated.policy_version,
             policy_count: validated.policies.length,
+            file_rule_count: validated.file_rules.length,
             sensitive_path_rule_count: validated.sensitivity.path_rules.length
           }
         });

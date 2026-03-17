@@ -448,6 +448,41 @@ test("gateway blocks filesystem reads of browser secret stores", async () => {
   }
 });
 
+test("gateway file rules with allow bypass downstream filesystem blocks", async () => {
+  const harness = await createBeforeToolCallHook();
+  try {
+    const writer = new StrategyStore(harness.dbPath);
+    try {
+      writer.writeOverride({
+        file_rules: [
+          {
+            id: "user-browser-allow",
+            directory: "/Users/liuzhuangm4/Library/Application Support/Google/Chrome",
+            decision: "allow",
+            reason_codes: ["USER_FILE_RULE_ALLOW"],
+          }
+        ]
+      });
+    } finally {
+      writer.close();
+    }
+
+    const blocked = await harness.beforeToolCall(
+      {
+        toolName: "filesystem.read",
+        params: {
+          path: "/Users/liuzhuangm4/Library/Application Support/Google/Chrome/Default/Cookies",
+        },
+      },
+      DEFAULT_GATEWAY_CTX,
+    );
+
+    assert.equal(blocked, undefined);
+  } finally {
+    harness.cleanup();
+  }
+});
+
 test("gateway maps shell file writes to filesystem.write rules", async () => {
   const harness = await createBeforeToolCallHook();
   try {

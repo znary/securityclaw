@@ -1,5 +1,5 @@
 version: "1.0"
-policy_version: "2026-03-15"
+policy_version: "2026-03-17"
 environment: "default"
 defaults:
   approval_ttl_seconds: 900
@@ -103,7 +103,7 @@ policies:
     group: "data_access"
     control_domain: "data_access"
     title: "枚举敏感目录需审批"
-    description: "对凭据目录、配置目录和下载区等高风险目录的枚举与搜索默认进入审批。"
+    description: "对凭据目录、个人内容目录、下载暂存区、浏览器资料目录和通信存储等高风险目录的枚举与搜索默认进入审批。"
     severity: "high"
     owner: "security"
     playbook_url: "https://docs.safeclaw.local/playbooks/sensitive-enumeration"
@@ -117,21 +117,24 @@ policies:
         - "secops"
       ttl_seconds: 600
     match:
-      tool:
-        - "filesystem.list"
-      path_glob:
-        - "**/.ssh"
-        - "**/.ssh/**"
-        - "**/.kube"
-        - "**/.kube/**"
-        - "**/Downloads"
-        - "**/Downloads/**"
+      tool_group:
+        - "filesystem"
+      operation:
+        - "list"
+        - "search"
+      asset_labels:
+        - "credential"
+        - "personal_content"
+        - "download_staging"
+        - "browser_profile"
+        - "browser_secret_store"
+        - "communication_store"
 
   - rule_id: "credential-path-access-challenge"
     group: "credential_protection"
     control_domain: "credential_protection"
     title: "敏感凭据路径访问需审批"
-    description: "读取 .env、SSH、Kube、包管理凭据和云访问凭据时默认要求审批。"
+    description: "读取凭据目录、环境变量文件、密钥材料和云访问凭据时默认要求审批。"
     severity: "critical"
     owner: "security"
     playbook_url: "https://docs.safeclaw.local/playbooks/credential-path"
@@ -152,16 +155,35 @@ policies:
         - "read"
         - "search"
         - "list"
-      path_glob:
-        - "**/.env"
-        - "**/.npmrc"
-        - "**/.pypirc"
-        - "**/.ssh"
-        - "**/.ssh/**"
-        - "**/id_rsa"
-        - "**/kubeconfig"
-        - "**/.kube/config"
-        - "**/aws/credentials"
+      asset_labels:
+        - "credential"
+
+  - rule_id: "communication-store-access-challenge"
+    group: "data_access"
+    control_domain: "data_access"
+    title: "读取本地通信存储需审批"
+    description: "直接访问本地消息数据库、邮件存储和聊天历史目录时默认进入审批。"
+    severity: "high"
+    owner: "security"
+    playbook_url: "https://docs.safeclaw.local/playbooks/communication-store"
+    enabled: true
+    priority: 255
+    decision: "challenge"
+    reason_codes:
+      - "COMMUNICATION_STORE_ACCESS_REQUIRES_APPROVAL"
+    approval_requirements:
+      approver_roles:
+        - "secops"
+      ttl_seconds: 600
+    match:
+      tool_group:
+        - "filesystem"
+      operation:
+        - "read"
+        - "search"
+        - "list"
+      asset_labels:
+        - "communication_store"
 
   - rule_id: "public-network-egress-challenge"
     group: "data_egress"
@@ -381,8 +403,8 @@ policies:
   - rule_id: "browser-credential-block"
     group: "credential_protection"
     control_domain: "credential_protection"
-    title: "读取浏览器 Cookie、密码或自动填充默认拦截"
-    description: "浏览器凭据、Cookie、自动填充和下载历史等高敏内容读取默认阻断。"
+    title: "读取浏览器 Cookie、密码库或历史数据库默认拦截"
+    description: "浏览器凭据、Cookie、自动填充、历史与下载数据库等高敏内容读取默认阻断。"
     severity: "critical"
     owner: "security"
     playbook_url: "https://docs.safeclaw.local/playbooks/browser-secret"
@@ -394,6 +416,11 @@ policies:
     match:
       tool_group:
         - "browser"
+        - "filesystem"
+      operation:
+        - "read"
+        - "search"
+        - "list"
       data_labels:
         - "browser_secret"
 

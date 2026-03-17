@@ -92,7 +92,7 @@
 
 ## 7. 里程碑（12周）
 - W1-2：Plugin 框架与统一事件模型
-- W3-5：五个 Hook Guardrails MVP
+- W3-5：五个 Hook Guardrails 正式版本
 - W6-8：规则引擎 + 审批状态机
 - W9-10：SQLite 策略覆盖 + 事件 sink
 - W11-12：压测、演练、灰度发布

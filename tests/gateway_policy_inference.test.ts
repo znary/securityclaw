@@ -327,6 +327,127 @@ test("gateway maps shell directory enumeration to filesystem.list rules", async 
   }
 });
 
+test("gateway challenges direct filesystem search in sensitive directories", async () => {
+  const harness = await createBeforeToolCallHook();
+  try {
+    const blocked = await harness.beforeToolCall(
+      {
+        toolName: "filesystem.search",
+        params: {
+          path: "Downloads",
+          query: "invoice",
+        },
+      },
+      DEFAULT_GATEWAY_CTX,
+    );
+
+    assert.deepEqual(blocked?.block, true);
+    assert.match(String(blocked?.blockReason), /SENSITIVE_DIRECTORY_ENUMERATION_REQUIRES_APPROVAL/);
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("gateway maps shell search in sensitive directories to approval rules", async () => {
+  const harness = await createBeforeToolCallHook();
+  try {
+    const blocked = await harness.beforeToolCall(
+      {
+        toolName: "exec",
+        params: {
+          command: "find ~/Downloads -name '*.pdf' -print",
+        },
+      },
+      DEFAULT_GATEWAY_CTX,
+    );
+
+    assert.deepEqual(blocked?.block, true);
+    assert.match(String(blocked?.blockReason), /SENSITIVE_DIRECTORY_ENUMERATION_REQUIRES_APPROVAL/);
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("gateway expands $HOME paths before evaluating shell search rules", async () => {
+  const harness = await createBeforeToolCallHook();
+  try {
+    const blocked = await harness.beforeToolCall(
+      {
+        toolName: "exec",
+        params: {
+          command: "find \"$HOME/Downloads\" -maxdepth 1 -type f ! -name '.*' -print | sed 's#^.*/##' | head -n 1",
+        },
+      },
+      DEFAULT_GATEWAY_CTX,
+    );
+
+    assert.deepEqual(blocked?.block, true);
+    assert.match(String(blocked?.blockReason), /SENSITIVE_DIRECTORY_ENUMERATION_REQUIRES_APPROVAL/);
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("gateway challenges shell search in personal content directories", async () => {
+  const harness = await createBeforeToolCallHook();
+  try {
+    const blocked = await harness.beforeToolCall(
+      {
+        toolName: "exec",
+        params: {
+          command: "find \"$HOME/Documents\" -maxdepth 1 -type f ! -name '.*' -print | sed 's#^.*/##' | sed -n '2p'",
+        },
+      },
+      DEFAULT_GATEWAY_CTX,
+    );
+
+    assert.deepEqual(blocked?.block, true);
+    assert.match(String(blocked?.blockReason), /SENSITIVE_DIRECTORY_ENUMERATION_REQUIRES_APPROVAL/);
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("gateway challenges filesystem reads from communication stores", async () => {
+  const harness = await createBeforeToolCallHook();
+  try {
+    const blocked = await harness.beforeToolCall(
+      {
+        toolName: "filesystem.read",
+        params: {
+          path: "/Users/liuzhuangm4/Library/Messages/chat.db",
+        },
+      },
+      DEFAULT_GATEWAY_CTX,
+    );
+
+    assert.deepEqual(blocked?.block, true);
+    assert.match(String(blocked?.blockReason), /COMMUNICATION_STORE_ACCESS_REQUIRES_APPROVAL/);
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("gateway blocks filesystem reads of browser secret stores", async () => {
+  const harness = await createBeforeToolCallHook();
+  try {
+    const blocked = await harness.beforeToolCall(
+      {
+        toolName: "filesystem.read",
+        params: {
+          path: "/Users/liuzhuangm4/Library/Application Support/Google/Chrome/Default/Cookies",
+        },
+      },
+      DEFAULT_GATEWAY_CTX,
+    );
+
+    assert.deepEqual(blocked?.block, true);
+    assert.match(String(blocked?.blockReason), /BROWSER_SECRET_ACCESS_BLOCK/);
+  } finally {
+    harness.cleanup();
+  }
+});
+
 test("gateway maps shell file writes to filesystem.write rules", async () => {
   const harness = await createBeforeToolCallHook();
   try {

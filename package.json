@@ -1,7 +1,7 @@
 {
   "name": "safeclaw",
   "version": "0.1.0",
-  "description": "SafeClaw security plugin MVP for OpenClaw-compatible hooks.",
+  "description": "SafeClaw security plugin for OpenClaw-compatible hooks.",
   "type": "module",
   "private": true,
   "openclaw": {

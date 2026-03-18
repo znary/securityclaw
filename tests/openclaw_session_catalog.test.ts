@@ -16,6 +16,17 @@ test("session catalog reads openclaw sessions and resolves stable subjects", () 
       path.join(sessionsDir, "sessions.json"),
       JSON.stringify(
         {
+          "agent:main:main": {
+            sessionId: "session-main",
+            updatedAt: Date.parse("2026-03-15T12:00:00.000Z"),
+            chatType: "direct",
+            deliveryContext: {
+              channel: "webchat"
+            },
+            origin: {
+              provider: "webchat"
+            }
+          },
           "telegram:direct:chat-42": {
             sessionId: "session-1",
             updatedAt: Date.parse("2026-03-15T10:00:00.000Z"),
@@ -43,11 +54,14 @@ test("session catalog reads openclaw sessions and resolves stable subjects", () 
     );
 
     const sessions = listOpenClawChatSessions(tempDir);
-    assert.equal(sessions.length, 2);
-    assert.equal(sessions[0]?.subject, "telegram:chat-99");
-    assert.equal(sessions[0]?.agent_id, "main");
-    assert.equal(sessions[0]?.channel, "telegram");
-    assert.equal(sessions[1]?.subject, "telegram:chat-42");
+    assert.equal(sessions.length, 3);
+    assert.equal(sessions[0]?.subject, "agent:main:main");
+    assert.equal(sessions[0]?.label, "main");
+    assert.equal(sessions[0]?.channel, "webchat");
+    assert.equal(sessions[1]?.subject, "telegram:chat-99");
+    assert.equal(sessions[1]?.agent_id, "main");
+    assert.equal(sessions[1]?.channel, "telegram");
+    assert.equal(sessions[2]?.subject, "telegram:chat-42");
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }

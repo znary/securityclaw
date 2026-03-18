@@ -7,7 +7,9 @@ import { copyFileSync, mkdtempSync, rmSync } from "node:fs";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 
 import plugin from "../index.ts";
+import { ConfigManager } from "../src/config/loader.ts";
 import { StrategyStore } from "../src/config/strategy_store.ts";
+import { buildStrategyV2FromConfig } from "../src/domain/services/strategy_model.ts";
 
 type RegisteredCommand = Parameters<OpenClawPluginApi["registerCommand"]>[0];
 type HookHandler = (...args: unknown[]) => unknown;
@@ -241,6 +243,28 @@ function seedAdminAccountPolicy(dbPath: string, subject = "telegram:secops-admin
   }
 }
 
+function seedWarnDecision(dbPath: string, configPath: string, ruleId = "sensitive-directory-enumeration-challenge"): void {
+  const writer = new StrategyStore(dbPath);
+  try {
+    const current = writer.readOverride() ?? {};
+    const base = ConfigManager.fromFile(configPath).getConfig();
+    const strategy = buildStrategyV2FromConfig(base);
+    for (const capability of strategy.tool_policy.capabilities) {
+      for (const rule of capability.rules) {
+        if (rule.rule_id === ruleId) {
+          rule.decision = "warn";
+        }
+      }
+    }
+    writer.writeOverride({
+      ...current,
+      strategy,
+    });
+  } finally {
+    writer.close();
+  }
+}
+
 test("chat approval bridge auto-enables from admin account policies without plugin approval config", async () => {
   const tempDir = mkdtempSync(path.join(os.tmpdir(), "securityclaw-chat-approval-admin-sync-"));
   const configPath = path.join(tempDir, "policy.default.yaml");
@@ -407,6 +431,70 @@ test("chat approval bridge supports command-only approvals on non-button channel
     );
 
     assert.equal(approved, undefined);
+
+    const gatewayStop = harness.hooks.get("gateway_stop") as GatewayStopHook | undefined;
+    if (gatewayStop) {
+      await gatewayStop({}, {});
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("warn decisions notify the admin without creating approval buttons", async () => {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "securityclaw-chat-warn-notify-"));
+  const configPath = path.join(tempDir, "policy.default.yaml");
+  const dbPath = path.join(tempDir, "securityclaw.db");
+  const statusPath = path.join(tempDir, "securityclaw-status.json");
+
+  try {
+    copyFileSync("./config/policy.default.yaml", configPath);
+    seedAdminAccountPolicy(dbPath);
+    seedWarnDecision(dbPath, configPath);
+
+    const harness = createPluginApiHarness({ configPath, dbPath, statusPath });
+    await plugin.register(harness.api);
+
+    const beforeToolCall = harness.hooks.get("before_tool_call") as BeforeToolCallHook | undefined;
+    assert.ok(beforeToolCall);
+
+    const warned = await beforeToolCall(
+      {
+        toolName: "filesystem.list",
+        params: { path: "Downloads" },
+      },
+      {
+        agentId: "main",
+        sessionId: "session-warn-1",
+        sessionKey: "telegram:chat-42",
+        runId: "run-warn-1",
+        workspaceDir: "/tmp/workspace",
+        channelId: "telegram",
+      },
+    );
+
+    assert.equal(warned, undefined);
+    assert.equal(harness.sentMessages.length, 1);
+    assert.equal(harness.sentMessages[0]?.to, "secops-admin");
+    assert.match(String(harness.sentMessages[0]?.text), /(SecurityClaw Warning|SecurityClaw 风险提醒)/);
+    assert.equal(harness.sentMessages[0]?.opts?.buttons, undefined);
+
+    await beforeToolCall(
+      {
+        toolName: "filesystem.list",
+        params: { path: "Downloads" },
+      },
+      {
+        agentId: "main",
+        sessionId: "session-warn-2",
+        sessionKey: "telegram:chat-42",
+        runId: "run-warn-2",
+        workspaceDir: "/tmp/workspace",
+        channelId: "telegram",
+      },
+    );
+
+    assert.equal(harness.sentMessages.length, 1);
 
     const gatewayStop = harness.hooks.get("gateway_stop") as GatewayStopHook | undefined;
     if (gatewayStop) {

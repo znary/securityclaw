@@ -89,6 +89,14 @@ type ApprovalNotificationResult = {
   notifications: StoredApprovalNotification[];
 };
 
+type ChatNotificationOptions = {
+  buttons?: Array<Array<{
+    text: string;
+    callback_data: string;
+    style?: string;
+  }>>;
+};
+
 type ApprovalGrantMode = "temporary" | "longterm";
 
 type ResolvedApprovalBridge = {
@@ -975,6 +983,66 @@ function formatApprovalButtonLabel(record: StoredApprovalRecord, mode: ApprovalG
   return `${text("批准", "Approve")} ${formatCompactApprovalGrantDuration(record, mode)}`;
 }
 
+function buildApprovalNotificationButtons(record: StoredApprovalRecord): NonNullable<ChatNotificationOptions["buttons"]> {
+  return [
+    [
+      {
+        text: formatApprovalButtonLabel(record, "temporary"),
+        callback_data: `/${APPROVAL_APPROVE_COMMAND} ${record.approval_id}`,
+        style: "success",
+      },
+      {
+        text: formatApprovalButtonLabel(record, "longterm"),
+        callback_data: `/${APPROVAL_APPROVE_COMMAND} ${record.approval_id} long`,
+        style: "primary",
+      },
+    ],
+    [
+      {
+        text: text("拒绝", "Reject"),
+        callback_data: `/${APPROVAL_REJECT_COMMAND} ${record.approval_id}`,
+        style: "danger",
+      },
+    ],
+  ];
+}
+
+function formatWarnNotificationPrompt(params: {
+  actorId: string;
+  toolName: string;
+  scope: string;
+  traceId: string;
+  resourceScope: ResourceScope;
+  reasonCodes: string[];
+  rules: string;
+  resourcePaths: string[];
+  argsSummary: string;
+}): string {
+  const reasons = params.reasonCodes.join(", ") || text("策略提醒", "Policy warning");
+  const paths = params.resourcePaths.length > 0
+    ? trimText(params.resourcePaths.slice(0, 3).join(" | "), 160)
+    : undefined;
+  const summary = params.argsSummary ? trimText(params.argsSummary, 180) : undefined;
+
+  return [
+    text("SecurityClaw 风险提醒", "SecurityClaw Warning"),
+    `${text("对象", "Subject")}: ${params.actorId}`,
+    `${text("工具", "Tool")}: ${params.toolName}`,
+    `${text("范围", "Scope")}: ${params.scope}`,
+    `${text("资源", "Resource")}: ${formatResourceScopeDetail(params.resourceScope)}`,
+    `${text("原因", "Reason")}: ${reasons}`,
+    ...(paths ? [`${text("路径", "Paths")}: ${paths}`] : []),
+    ...(summary ? [`${text("参数", "Args")}: ${summary}`] : []),
+    ...(params.rules && params.rules !== "-" ? [`${text("规则", "Policy")}: ${params.rules}`] : []),
+    `${text("动作", "Action")}: ${text("本次已按提醒继续执行，请管理员关注。", "Execution continued with a warning. Admin attention recommended.")}`,
+    `${text("追踪", "Trace")}: ${params.traceId}`,
+  ].join("\n");
+}
+
+function shouldSendNotificationAfterCooldown(lastSentAtMs: number | undefined, nowMs = Date.now()): boolean {
+  return lastSentAtMs === undefined || nowMs - lastSentAtMs >= APPROVAL_NOTIFICATION_RESEND_COOLDOWN_MS;
+}
+
 function shouldResendPendingApproval(record: StoredApprovalRecord, nowMs = Date.now()): boolean {
   if (record.notifications.length === 0) {
     return true;
@@ -1376,11 +1444,11 @@ async function sendFeishuApprovalNotificationDirect(
   return messageId ? { messageId } : {};
 }
 
-async function sendApprovalNotification(
+async function sendChatNotification(
   api: OpenClawPluginApi,
   target: ChatApprovalTarget,
   message: string,
-  record: StoredApprovalRecord,
+  options: ChatNotificationOptions = {},
 ): Promise<StoredApprovalNotification> {
   const notification: StoredApprovalNotification = {
     channel: target.channel,
@@ -1400,27 +1468,7 @@ async function sendApprovalNotification(
       cfg: api.config,
       ...(target.account_id ? { accountId: target.account_id } : {}),
       ...(normalizeThreadId(target.thread_id) !== undefined ? { messageThreadId: normalizeThreadId(target.thread_id) } : {}),
-      buttons: [
-        [
-          {
-            text: formatApprovalButtonLabel(record, "temporary"),
-            callback_data: `/${APPROVAL_APPROVE_COMMAND} ${record.approval_id}`,
-            style: "success",
-          },
-          {
-            text: formatApprovalButtonLabel(record, "longterm"),
-            callback_data: `/${APPROVAL_APPROVE_COMMAND} ${record.approval_id} long`,
-            style: "primary",
-          },
-        ],
-        [
-          {
-            text: text("拒绝", "Reject"),
-            callback_data: `/${APPROVAL_REJECT_COMMAND} ${record.approval_id}`,
-            style: "danger",
-          },
-        ],
-      ],
+      ...(options.buttons ? { buttons: options.buttons } : {}),
     });
     if (result?.messageId) {
       notification.message_id = result.messageId;
@@ -1579,10 +1627,14 @@ async function sendApprovalNotification(
   );
 }
 
-async function notifyApprovalTargets(
+async function notifyChatTargets(
   api: OpenClawPluginApi,
   targets: ChatApprovalTarget[],
-  record: StoredApprovalRecord,
+  message: string,
+  params: {
+    label: string;
+    options?: ChatNotificationOptions;
+  },
 ): Promise<ApprovalNotificationResult> {
   if (targets.length === 0) {
     return {
@@ -1593,25 +1645,24 @@ async function notifyApprovalTargets(
 
   const notifications: StoredApprovalNotification[] = [];
   let sent = false;
-  const prompt = formatApprovalPrompt(record);
   for (const target of targets) {
     let delivered = false;
     let lastError: unknown;
     for (let attempt = 1; attempt <= APPROVAL_NOTIFICATION_MAX_ATTEMPTS; attempt += 1) {
       try {
-        const notification = await sendApprovalNotification(api, target, prompt, record);
+        const notification = await sendChatNotification(api, target, message, params.options);
         notifications.push(notification);
         sent = true;
         delivered = true;
         api.logger.info?.(
-          `securityclaw: sent approval prompt approval_id=${record.approval_id} channel=${target.channel} to=${target.to} attempt=${attempt}${notification.message_id ? ` message_id=${notification.message_id}` : ""}`,
+          `securityclaw: sent ${params.label} channel=${target.channel} to=${target.to} attempt=${attempt}${notification.message_id ? ` message_id=${notification.message_id}` : ""}`,
         );
         break;
       } catch (error) {
         lastError = error;
         if (attempt < APPROVAL_NOTIFICATION_MAX_ATTEMPTS) {
           api.logger.warn?.(
-            `securityclaw: retrying approval prompt approval_id=${record.approval_id} channel=${target.channel} to=${target.to} attempt=${attempt} (${String(error)})`,
+            `securityclaw: retrying ${params.label} channel=${target.channel} to=${target.to} attempt=${attempt} (${String(error)})`,
           );
           await sleep(APPROVAL_NOTIFICATION_RETRY_DELAYS_MS[attempt - 1] ?? APPROVAL_NOTIFICATION_RETRY_DELAYS_MS.at(-1) ?? 250);
         }
@@ -1619,12 +1670,37 @@ async function notifyApprovalTargets(
     }
     if (!delivered) {
       api.logger.warn?.(
-        `securityclaw: failed to send approval prompt approval_id=${record.approval_id} channel=${target.channel} to=${target.to} (${String(lastError)})`,
+        `securityclaw: failed to send ${params.label} channel=${target.channel} to=${target.to} (${String(lastError)})`,
       );
     }
   }
 
   return { sent, notifications };
+}
+
+async function notifyApprovalTargets(
+  api: OpenClawPluginApi,
+  targets: ChatApprovalTarget[],
+  record: StoredApprovalRecord,
+): Promise<ApprovalNotificationResult> {
+  return notifyChatTargets(api, targets, formatApprovalPrompt(record), {
+    label: `approval prompt approval_id=${record.approval_id}`,
+    options: {
+      buttons: buildApprovalNotificationButtons(record),
+    },
+  });
+}
+
+async function notifyWarnTargets(
+  api: OpenClawPluginApi,
+  targets: ChatApprovalTarget[],
+  message: string,
+  traceId: string,
+): Promise<boolean> {
+  const result = await notifyChatTargets(api, targets, message, {
+    label: `warning notification trace_id=${traceId}`,
+  });
+  return result.sent;
 }
 
 function formatApprovalBlockReason(params: {
@@ -2051,6 +2127,7 @@ const plugin = {
       return mergeApprovalBridgeConfig(deriveApprovalBridgeFromAdminPolicies(current.accountPolicyEngine));
     }
     const approvalStore = new ChatApprovalStore(dbPath);
+    const warnNotificationSentAt = new Map<string, number>();
     const initialApprovalBridge = resolveApprovalBridge(runtime);
     if (initialApprovalBridge.enabled) {
       api.logger.info?.(
@@ -2269,13 +2346,14 @@ const plugin = {
         let effectiveReasonCodes = [...(protectedStorageAccess?.reasonCodes ?? ["ALLOW"])];
         let accountOverride: ReturnType<AccountPolicyEngine["evaluate"]> | undefined;
         let approvalBlockReason: string | undefined;
+        let approvalRequestKey: string | undefined;
 
         if (!protectedStorageAccess) {
           const outcome = current.policyPipeline.evaluate(decisionContext, current.config.file_rules);
           const ruleIds = matchedPolicyRuleIds(outcome);
           rules = ruleIds.length > 0 ? ruleIds.join(",") : "-";
           accountOverride = outcome.matched_file_rule ? undefined : current.accountPolicyEngine.evaluate(approvalSubject);
-          const approvalRequestKey = createApprovalRequestKey({
+          approvalRequestKey = createApprovalRequestKey({
             policy_version: current.config.policy_version,
             scope: decisionContext.scope,
             tool_name: effectiveToolName,
@@ -2347,6 +2425,28 @@ const plugin = {
                 approvalId: pending.approval_id,
                 notificationSent: notificationResult.sent || pending.notifications.length > 0,
               });
+            }
+          }
+
+          if (effectiveDecision === "warn" && approvalBridge.enabled && approvalBridge.targets.length > 0 && approvalRequestKey) {
+            const nowMs = Date.now();
+            const lastSentAtMs = warnNotificationSentAt.get(approvalRequestKey);
+            if (shouldSendNotificationAfterCooldown(lastSentAtMs, nowMs)) {
+              const warningPrompt = formatWarnNotificationPrompt({
+                actorId: approvalSubject,
+                toolName: effectiveToolName,
+                scope: decisionContext.scope,
+                traceId,
+                resourceScope: decisionContext.resource_scope,
+                reasonCodes: effectiveReasonCodes,
+                rules,
+                resourcePaths: decisionContext.resource_paths,
+                argsSummary,
+              });
+              const warningSent = await notifyWarnTargets(api, approvalBridge.targets, warningPrompt, traceId);
+              if (warningSent) {
+                warnNotificationSentAt.set(approvalRequestKey, nowMs);
+              }
             }
           }
         }

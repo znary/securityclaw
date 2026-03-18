@@ -18,6 +18,13 @@ import {
   buildAdminDashboardSearch,
   readAdminDashboardUrlState
 } from "../../src/admin/dashboard_url_state.ts";
+import {
+  createAccountPolicyDraftFromSession,
+  DEFAULT_MAIN_ADMIN_SESSION_KEY,
+  ensureDefaultAdminAccount,
+  mergeAccountPoliciesWithSessions,
+  pruneAccountPolicyOverrides,
+} from "../../src/admin/account_catalog.ts";
 import { canonicalizeAccountPolicies } from "../../src/domain/services/account_policy_engine.ts";
 import { resolveSecurityClawLocale } from "../../src/i18n/locale.ts";
 
@@ -180,8 +187,6 @@ const ACCOUNT_MODE_TEXT = {
   apply_rules: { "zh-CN": "应用规则", en: "Apply rules" },
   default_allow: { "zh-CN": "默认放行", en: "Default allow" }
 };
-
-const QUICK_APPROVAL_ACTION_CHANNELS = new Set(["telegram"]);
 
 const SCOPE_TEXT = {
   default: { "zh-CN": "默认会话", en: "Default session" },
@@ -702,30 +707,6 @@ function accountMetaLabel(account) {
   if (account?.chat_type) parts.push(account.chat_type);
   if (account?.agent_id) parts.push(`agent:${account.agent_id}`);
   return parts.join(" · ") || "OpenClaw chat session";
-}
-
-function normalizeChannel(value) {
-  return typeof value === "string" && value.trim() ? value.trim().toLowerCase() : "";
-}
-
-function channelFromSubject(subject) {
-  if (typeof subject !== "string") {
-    return "";
-  }
-  const separator = subject.indexOf(":");
-  if (separator <= 0) {
-    return "";
-  }
-  return subject.slice(0, separator).trim().toLowerCase();
-}
-
-function resolveAccountChannel(account) {
-  return normalizeChannel(account?.channel) || channelFromSubject(account?.subject);
-}
-
-function supportsQuickApprovalActions(account) {
-  const channel = resolveAccountChannel(account);
-  return channel ? QUICK_APPROVAL_ACTION_CHANNELS.has(channel) : false;
 }
 
 function getJsonError(payload, fallback) {
@@ -1713,7 +1694,6 @@ function App() {
   const [accountPolicies, setAccountPolicies] = useState([]);
   const [publishedAccountPolicies, setPublishedAccountPolicies] = useState([]);
   const [availableSessions, setAvailableSessions] = useState([]);
-  const [selectedSessionSubject, setSelectedSessionSubject] = useState("");
   const [skillStatusPayload, setSkillStatusPayload] = useState(null);
   const [skillListPayload, setSkillListPayload] = useState(null);
   const [skillDetailPayload, setSkillDetailPayload] = useState(null);
@@ -1803,17 +1783,13 @@ function App() {
       })),
     [strategyModel]
   );
-  const eligibleSessions = useMemo(
-    () => availableSessions,
-    [availableSessions]
-  );
-  const availableSessionOptions = useMemo(
-    () => eligibleSessions.filter((session) => !accountPolicies.some((account) => account.subject === session.subject)),
-    [accountPolicies, eligibleSessions]
+  const displayAccounts = useMemo(
+    () => mergeAccountPoliciesWithSessions(ensureDefaultAdminAccount(accountPolicies, availableSessions), availableSessions),
+    [accountPolicies, availableSessions]
   );
   const selectedAdminSubject = useMemo(
-    () => accountPolicies.find((account) => account.is_admin)?.subject || "",
-    [accountPolicies]
+    () => displayAccounts.find((account) => account.is_admin)?.subject || "",
+    [displayAccounts]
   );
   const normalizedFileRules = useMemo(() => normalizeFileRules(fileRules), [fileRules]);
   const normalizedNewFileRuleOperations = useMemo(
@@ -1975,9 +1951,10 @@ function App() {
       const nextStrategyModel = extractStrategyModel(strategy);
       const nextFileRules = extractFileRules(strategy);
       const nextAccountPolicies = extractAccountPolicies(accounts);
+      const nextSessions = extractChatSessions(accounts);
       setPublishedStrategyModel(nextStrategyModel);
       setPublishedAccountPolicies(nextAccountPolicies);
-      setAvailableSessions(extractChatSessions(accounts));
+      setAvailableSessions(nextSessions);
       if (syncRules === true) {
         setStrategyModel(clone(nextStrategyModel));
         setSelectedFileDirectory((current) => current || nextFileRules[0]?.directory || "");
@@ -2334,7 +2311,7 @@ function App() {
   }, [loadData]);
 
   const saveAccounts = useCallback(async (nextAccounts) => {
-    const normalizedAccounts = canonicalizeAccountPolicies(nextAccounts);
+    const normalizedAccounts = canonicalizeAccountPolicies(pruneAccountPolicyOverrides(nextAccounts));
     setSaving(true);
     setError("");
     setMessage(ui("账号策略自动保存中...", "Saving account policy changes..."));
@@ -2358,6 +2335,7 @@ function App() {
       const details = `${payload.message || ""}${suffix}`.trim();
       setMessage(details ? `${ui("账号策略已自动保存。", "Account policies saved automatically.")} ${details}` : ui("账号策略已自动保存。", "Account policies saved automatically."));
       setPublishedAccountPolicies(clone(normalizedAccounts));
+      setAccountPolicies(clone(normalizedAccounts));
       await loadData({ syncRules: false, syncAccounts: false, silent: true });
     } catch (saveError) {
       setError(String(saveError));
@@ -2652,54 +2630,71 @@ function App() {
     event.stopPropagation();
   }
 
-  function addSelectedSessionAccount() {
-    if (!selectedSessionSubject) {
-      return;
-    }
-    const session = availableSessionOptions.find((item) => item.subject === selectedSessionSubject);
-    if (!session) {
-      return;
-    }
-    setAccountPolicies((current) => [
-      ...current,
-      {
-        subject: session.subject,
-        label: session.label,
-        mode: "apply_rules",
-        is_admin: false,
-        session_key: session.session_key,
-        session_id: session.session_id,
-        agent_id: session.agent_id,
-        channel: session.channel,
-        chat_type: session.chat_type,
-        updated_at: new Date().toISOString()
-      }
-    ]);
-    setSelectedSessionSubject("");
-  }
-
   function updateAccountPolicy(subject, patch) {
-    setAccountPolicies((current) =>
-      current.map((account) =>
-        account.subject === subject
-          ? {
-              ...account,
-              ...patch,
-              updated_at: new Date().toISOString()
-            }
-          : account
-      )
-    );
+    const nowIso = new Date().toISOString();
+    const session = availableSessions.find((item) => item.subject === subject);
+    setAccountPolicies((current) => {
+      const currentIndex = current.findIndex((account) => account.subject === subject);
+      const base =
+        currentIndex >= 0
+          ? current[currentIndex]
+          : createAccountPolicyDraftFromSession(session, subject);
+      const nextAccount = {
+        ...base,
+        ...patch,
+        updated_at: nowIso
+      };
+      if (currentIndex >= 0) {
+        return pruneAccountPolicyOverrides(
+          current.map((account, index) => (index === currentIndex ? nextAccount : account))
+        );
+      }
+      return pruneAccountPolicyOverrides([...current, nextAccount]);
+    });
   }
 
   function setAdminAccount(subject) {
-    setAccountPolicies((current) =>
-      current.map((account) => ({
-        ...account,
-        is_admin: account.subject === subject,
-        updated_at: new Date().toISOString()
-      }))
-    );
+    const nowIso = new Date().toISOString();
+    const session = availableSessions.find((item) => item.subject === subject);
+    setAccountPolicies((current) => {
+      let next = current.map((account) =>
+        account.subject === subject
+          ? {
+              ...account,
+              is_admin: true,
+              updated_at: nowIso
+            }
+          : account.is_admin
+            ? {
+                ...account,
+                is_admin: false,
+                updated_at: nowIso
+              }
+            : account
+      );
+      if (!next.some((account) => account.subject === subject) && subject !== DEFAULT_MAIN_ADMIN_SESSION_KEY) {
+        next = [
+          ...next,
+          {
+            ...createAccountPolicyDraftFromSession(session, subject),
+            is_admin: true,
+            updated_at: nowIso
+          }
+        ];
+      }
+      if (subject === DEFAULT_MAIN_ADMIN_SESSION_KEY) {
+        next = next.map((account) =>
+          account.subject === subject
+            ? {
+                ...account,
+                is_admin: false,
+                updated_at: nowIso
+              }
+            : account
+        );
+      }
+      return pruneAccountPolicyOverrides(next);
+    });
   }
 
   function toggleDraftFileRuleOperation(operation) {
@@ -2715,10 +2710,6 @@ function App() {
         ? normalizedCurrent.filter((entry) => entry !== operation)
         : normalizeFileRuleOperations([...normalizedCurrent, operation]);
     });
-  }
-
-  function removeAccountPolicy(subject) {
-    setAccountPolicies((current) => current.filter((account) => account.subject !== subject));
   }
 
   function updateDirectoryFileRule(ruleId, updater) {
@@ -4410,48 +4401,22 @@ function App() {
                   <h2>{ui("账号策略", "Account Policies")}</h2>
                   <p className="accounts-intro">
                     {ui(
-                      "账号策略在规则引擎之后插入判断，不改动现有规则定义。管理员审批账号只能单选一个。Telegram 会展示快捷审批按钮，其他渠道走命令审批。",
-                      "Account policies are applied after rule evaluation without changing rule definitions. Only one admin approver account can be selected. Telegram provides quick-action buttons; other channels use command approvals."
+                      "设置账号模式和管理员。默认管理员为 main。",
+                      "Set account mode and admin. main is the default admin."
                     )}
                   </p>
                 </div>
                 <div className="rule-meta">
-                  <span className="meta-pill">{ui("已配置", "Configured")} {accountPolicies.length}</span>
-                  <span className="meta-pill">{ui("可选会话", "Available Sessions")} {eligibleSessions.length}</span>
+                  <span className="meta-pill">{ui("会话", "Sessions")} {displayAccounts.length}</span>
+                  <span className="meta-pill">{ui("配置", "Overrides")} {accountPolicies.length}</span>
                 </div>
               </div>
 
-              <div className="account-toolbar">
-                <div className="account-picker">
-                  <select
-                    value={selectedSessionSubject}
-                    onChange={(event) => setSelectedSessionSubject(event.target.value)}
-                    disabled={availableSessionOptions.length === 0}
-                  >
-                    <option value="">{ui("从 OpenClaw chat session 选择账号", "Select an account from OpenClaw chat sessions")}</option>
-                    {availableSessionOptions.map((session) => (
-                      <option key={session.subject} value={session.subject}>
-                        {accountPrimaryLabel(session)}{session.channel ? ` · ${session.channel}` : ""}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    className="primary"
-                    type="button"
-                    disabled={!selectedSessionSubject}
-                    onClick={addSelectedSessionAccount}
-                  >
-                    {ui("添加账号", "Add Account")}
-                  </button>
-                </div>
-                <div className="chart-subtitle">{ui("所有会话都可配置为管理员账号。Telegram 支持快捷按钮，其它渠道可直接回复审批命令。", "Any session can be set as an admin approver account. Telegram supports quick-action buttons; other channels can reply with approval commands.")}</div>
-              </div>
-
-              {accountPolicies.length === 0 ? (
-                <div className="chart-empty">{ui("暂无账号策略。先从 OpenClaw 现有 chat session 里选择一个账号。", "No account policies yet. Select an account from existing OpenClaw chat sessions first.")}</div>
+              {displayAccounts.length === 0 ? (
+                <div className="chart-empty">{ui("还没有会话。", "No sessions yet.")}</div>
               ) : (
                 <div className="account-list">
-                  {accountPolicies.map((account) => (
+                  {displayAccounts.map((account) => (
                     <article key={account.subject} className="account-card">
                       <div className="account-card-head">
                         <div>
@@ -4465,13 +4430,6 @@ function App() {
                           <div className="account-subject">{account.subject}</div>
                           <div className="account-meta">{accountMetaLabel(account)}</div>
                         </div>
-                        <button
-                          className="ghost small"
-                          type="button"
-                          onClick={() => removeAccountPolicy(account.subject)}
-                        >
-                          {ui("删除", "Remove")}
-                        </button>
                       </div>
 
                       <div className="account-controls">
@@ -4497,9 +4455,7 @@ function App() {
                               }
                             }}
                           />
-                          <span>{supportsQuickApprovalActions(account)
-                            ? ui("管理员账号（单选，支持快捷按钮）", "Admin approver account (single-select, quick buttons supported)")
-                            : ui("管理员账号（单选，命令审批）", "Admin approver account (single-select, command-based approval)")}</span>
+                          <span>{ui("管理员", "Admin")}</span>
                         </label>
                       </div>
                     </article>

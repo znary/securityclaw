@@ -52,6 +52,14 @@ function normalizeTimestamp(value: unknown): string | undefined {
   return undefined;
 }
 
+function deriveSessionLabel(agentId: string, sessionKey: string, subject: string): string {
+  const trimmedSessionKey = sessionKey.trim();
+  if (trimmedSessionKey === `agent:${agentId}:main` || trimmedSessionKey === `agent:${agentId}:${agentId}`) {
+    return "main";
+  }
+  return subject;
+}
+
 function readSessionFile(filePath: string): JsonRecord {
   const raw = JSON.parse(readFileSync(filePath, "utf8")) as unknown;
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
@@ -106,7 +114,7 @@ export function listOpenClawChatSessions(openClawHome = path.join(os.homedir(), 
 
       const entry: OpenClawChatSession = {
         subject,
-        label: subject,
+        label: deriveSessionLabel(agentId, sessionKey, subject),
         session_key: sessionKey,
         ...(sessionId ? { session_id: sessionId } : {}),
         ...(channel ? { channel } : {}),

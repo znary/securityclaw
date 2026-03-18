@@ -69,6 +69,7 @@ export function resolveAdminTheme(
 
 export const TAB_ITEMS = [
   { id: "overview" },
+  { id: "hardening" },
   { id: "accounts" },
   { id: "rules" },
   { id: "skills" },
@@ -77,6 +78,7 @@ export const TAB_ITEMS = [
 
 export function tabLabel(tabId: string): string {
   if (tabId === "overview") return ui("概览", "Overview");
+  if (tabId === "hardening") return ui("系统加固", "Claw Guard");
   if (tabId === "accounts") return ui("账号", "Accounts");
   if (tabId === "rules") return ui("策略", "Strategy");
   if (tabId === "skills") return ui("Skill", "Skill");

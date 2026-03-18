@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 
 import type {
@@ -6,6 +6,12 @@ import type {
   AdminDecisionFilterId,
   AdminTabId
 } from "../../src/admin/dashboard_url_state.ts";
+import type {
+  ClawGuardApplyPayload,
+  ClawGuardFinding,
+  ClawGuardPreviewPayload,
+  ClawGuardStatusPayload,
+} from "../../src/admin/claw_guard_types.ts";
 import type { OpenClawChatSession } from "../../src/admin/openclaw_session_catalog.ts";
 import type {
   SkillDetailPayload,
@@ -104,6 +110,7 @@ import {
   EventsPanel,
   OverviewPanel,
 } from "./dashboard_panels.tsx";
+import { HardeningPanel } from "./dashboard_hardening_panel.tsx";
 import { RulesPanel } from "./dashboard_rules_panel.tsx";
 import { SkillsPanel } from "./dashboard_skills_panel.tsx";
 import type { FilesystemOverridesSectionProps } from "./filesystem_overrides_section.tsx";
@@ -170,6 +177,11 @@ type LoadDecisionOptions = {
 type LoadSkillDataOptions = {
   silent?: boolean;
   syncPolicy?: boolean;
+};
+
+type LoadHardeningOptions = {
+  silent?: boolean;
+  keepLoading?: boolean;
 };
 
 type NavigateDashboardInput = Partial<AdminDashboardUrlState>;
@@ -300,6 +312,32 @@ async function getJson<T>(url: string): Promise<T> {
     throw new Error(getJsonError(payload, ui(`请求失败: ${response.status}`, `Request failed: ${response.status}`)));
   }
   return payload as T;
+}
+
+async function postJson<T>(url: string, body: Record<string, unknown>): Promise<T> {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      accept: "application/json",
+      "content-type": "application/json",
+      "x-securityclaw-locale": getActiveAdminLocale()
+    },
+    body: JSON.stringify(body)
+  });
+  const payload = await response.json();
+  if (!response.ok) {
+    throw new Error(getJsonError(payload, ui(`请求失败: ${response.status}`, `Request failed: ${response.status}`)));
+  }
+  return payload as T;
+}
+
+const HARDENING_APPLY_REFRESH_ATTEMPTS = 8;
+const HARDENING_APPLY_REFRESH_INTERVAL_MS = 1200;
+
+function waitFor(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
 }
 
 function extractPolicies(strategyPayload: StrategyApiPayload | unknown): StrategyRuleDisplay[] {
@@ -1028,11 +1066,18 @@ function App() {
   const [skillPolicySaving, setSkillPolicySaving] = useState(false);
   const [skillActionLoading, setSkillActionLoading] = useState("");
   const [skillConfirmAction, setSkillConfirmAction] = useState<SkillConfirmAction | null>(null);
+  const [hardeningStatus, setHardeningStatus] = useState<ClawGuardStatusPayload | null>(null);
+  const [hardeningLoading, setHardeningLoading] = useState(false);
+  const [selectedHardeningFindingId, setSelectedHardeningFindingId] = useState("");
+  const [hardeningPreview, setHardeningPreview] = useState<ClawGuardPreviewPayload | null>(null);
+  const [hardeningPreviewLoading, setHardeningPreviewLoading] = useState(false);
+  const [hardeningApplyLoading, setHardeningApplyLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [decisionLoading, setDecisionLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const hardeningPreviewRequestIdRef = useRef(0);
   const [activeTab, setActiveTab] = useState<AdminTabId>(() => readInitialAdminDashboardViewState().tab);
   const [decisionFilter, setDecisionFilter] = useState<AdminDecisionFilterId>(() => readInitialAdminDashboardViewState().decisionFilter);
   const [decisionPage, setDecisionPage] = useState(() => readInitialAdminDashboardViewState().decisionPage);
@@ -1128,6 +1173,11 @@ function App() {
     quarantined: 0,
     trusted_overrides: 0
   };
+  const hardeningFindings = useMemo(() => toArray<ClawGuardFinding>(hardeningStatus?.findings), [hardeningStatus]);
+  const selectedHardeningFinding = useMemo(
+    () => hardeningFindings.find((item) => item.id === selectedHardeningFindingId) || null,
+    [hardeningFindings, selectedHardeningFindingId]
+  );
   useEffect(() => {
     setActiveAdminLocale(locale);
     if (typeof document !== "undefined") {
@@ -1349,6 +1399,90 @@ function App() {
     }
   }, []);
 
+  const loadHardeningStatus = useCallback(async (options: LoadHardeningOptions = {}): Promise<ClawGuardStatusPayload | null> => {
+    const { silent = false, keepLoading = false } = options;
+    const shouldManageLoading = !silent && !keepLoading;
+    if (!silent) {
+      setError("");
+    }
+    if (shouldManageLoading) {
+      setHardeningLoading(true);
+    }
+    try {
+      const payload = await getJson<ClawGuardStatusPayload>(`/api/hardening/status?ts=${Date.now()}`);
+      setHardeningStatus(payload);
+      return payload;
+    } catch (loadError) {
+      if (!silent) {
+        setError(String(loadError));
+      }
+      return null;
+    } finally {
+      if (shouldManageLoading) {
+        setHardeningLoading(false);
+      }
+    }
+  }, []);
+
+  const refreshHardeningStatusAfterApply = useCallback(async (findingId: string, restartRequired: boolean) => {
+    setHardeningLoading(true);
+    setError("");
+    try {
+      const attempts = restartRequired ? HARDENING_APPLY_REFRESH_ATTEMPTS : Math.max(3, HARDENING_APPLY_REFRESH_ATTEMPTS - 2);
+      for (let attempt = 0; attempt < attempts; attempt += 1) {
+        if (attempt > 0) {
+          await waitFor(HARDENING_APPLY_REFRESH_INTERVAL_MS);
+        }
+        const payload = await loadHardeningStatus({ silent: true, keepLoading: true });
+        if (!payload) {
+          continue;
+        }
+        const findingStillExists = toArray<ClawGuardFinding>(payload.findings).some((item) => item.id === findingId);
+        if (!findingStillExists) {
+          return true;
+        }
+      }
+      return false;
+    } finally {
+      setHardeningLoading(false);
+    }
+  }, [loadHardeningStatus]);
+
+  const loadHardeningPreview = useCallback(async (findingId: string, options?: Record<string, unknown>) => {
+    if (!findingId) {
+      hardeningPreviewRequestIdRef.current += 1;
+      setSelectedHardeningFindingId("");
+      setHardeningPreview(null);
+      setHardeningPreviewLoading(false);
+      return;
+    }
+    const requestId = hardeningPreviewRequestIdRef.current + 1;
+    hardeningPreviewRequestIdRef.current = requestId;
+    setSelectedHardeningFindingId(findingId);
+    setHardeningPreviewLoading(true);
+    setHardeningPreview(null);
+    setError("");
+    try {
+      const payload = await postJson<ClawGuardPreviewPayload>(
+        `/api/hardening/fixes/${encodeURIComponent(findingId)}/preview`,
+        options ? { options } : {}
+      );
+      if (hardeningPreviewRequestIdRef.current !== requestId) {
+        return;
+      }
+      setHardeningPreview(payload);
+    } catch (loadError) {
+      if (hardeningPreviewRequestIdRef.current !== requestId) {
+        return;
+      }
+      setError(String(loadError));
+    } finally {
+      if (hardeningPreviewRequestIdRef.current === requestId) {
+        setHardeningPreviewLoading(false);
+      }
+    }
+  }, []);
+
   const loadDirectoryPicker = useCallback(async (targetPath = "") => {
     setFilePickerLoading(true);
     setFilePickerError("");
@@ -1410,11 +1544,32 @@ function App() {
   }, [activeTab, loadSkillDetail, selectedSkillId]);
 
   useEffect(() => {
-    if (!filePickerOpen && !fileRuleDeleteTarget && !skillConfirmAction) {
+    if (activeTab !== "hardening") {
+      return;
+    }
+    if (!hardeningStatus) {
+      void loadHardeningStatus({ silent: false });
+    }
+  }, [activeTab, hardeningStatus, loadHardeningStatus]);
+
+  useEffect(() => {
+    if (activeTab !== "hardening" || !hardeningStatus) {
+      return;
+    }
+    void loadHardeningStatus({ silent: true });
+  }, [activeTab, loadHardeningStatus, locale]);
+
+  useEffect(() => {
+    if (!filePickerOpen && !fileRuleDeleteTarget && !skillConfirmAction && !selectedHardeningFindingId) {
       return undefined;
     }
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        if (selectedHardeningFindingId) {
+          setSelectedHardeningFindingId("");
+          setHardeningPreview(null);
+          return;
+        }
         if (skillConfirmAction) {
           setSkillConfirmAction(null);
           return;
@@ -1428,7 +1583,7 @@ function App() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [filePickerOpen, fileRuleDeleteTarget, skillConfirmAction]);
+  }, [filePickerOpen, fileRuleDeleteTarget, selectedHardeningFindingId, skillConfirmAction]);
 
   useEffect(() => {
     if (hasPendingDashboardChanges || saving || skillPolicySaving || skillActionLoading) {
@@ -1725,6 +1880,41 @@ function App() {
     },
     [loadSkillData, loadSkillDetail, selectedSkillId]
   );
+
+  const closeHardeningPreview = useCallback(() => {
+    hardeningPreviewRequestIdRef.current += 1;
+    setSelectedHardeningFindingId("");
+    setHardeningPreview(null);
+    setHardeningPreviewLoading(false);
+  }, []);
+
+  const selectHardeningRepairChoice = useCallback((findingId: string, choiceId: string) => {
+    void loadHardeningPreview(findingId, { choice: choiceId });
+  }, [loadHardeningPreview]);
+
+  const applyHardeningFix = useCallback(async () => {
+    if (!selectedHardeningFindingId) {
+      return;
+    }
+    setHardeningApplyLoading(true);
+    setError("");
+    try {
+      const findingId = selectedHardeningFindingId;
+      const selectedChoiceId = hardeningPreview?.selected_choice_id;
+      const payload = await postJson<ClawGuardApplyPayload>(
+        `/api/hardening/fixes/${encodeURIComponent(findingId)}/apply`,
+        selectedChoiceId ? { options: { choice: selectedChoiceId } } : {}
+      );
+      setMessage(payload.message);
+      closeHardeningPreview();
+      await refreshHardeningStatusAfterApply(findingId, payload.restart_required);
+    } catch (applyError) {
+      setError(String(applyError));
+      setMessage("");
+    } finally {
+      setHardeningApplyLoading(false);
+    }
+  }, [closeHardeningPreview, hardeningPreview, refreshHardeningStatusAfterApply, selectedHardeningFindingId]);
 
   useEffect(() => {
     if (loading || saving || (!hasPendingRuleChanges && !hasPendingFileRuleChanges)) {
@@ -2131,6 +2321,7 @@ function App() {
   const accountCount = displayAccounts.length;
   const tabCounts: Record<AdminTabId, number> = {
     overview: stats.total,
+    hardening: hardeningStatus?.summary?.risk_count || 0,
     events: stats.total,
     rules: policies.length,
     skills: skillOverviewStats.total,
@@ -2282,6 +2473,24 @@ function App() {
           skillSourceLabel={skillSourceLabel}
           onOpenDecisionRecords={openDecisionRecords}
           onOpenSkillWorkspace={openSkillWorkspace}
+        />
+      ) : null}
+
+      {activeTab === "hardening" ? (
+        <HardeningPanel
+          loading={hardeningLoading}
+          status={hardeningStatus}
+          selectedFinding={selectedHardeningFinding}
+          selectedFindingId={selectedHardeningFindingId}
+          preview={hardeningPreview}
+          previewLoading={hardeningPreviewLoading}
+          applyLoading={hardeningApplyLoading}
+          onRefresh={() => void loadHardeningStatus({ silent: false })}
+          onOpenFinding={(findingId, options) => void loadHardeningPreview(findingId, options)}
+          onClosePreview={closeHardeningPreview}
+          onSelectRepairChoice={selectHardeningRepairChoice}
+          onApplyPreview={applyHardeningFix}
+          formatTime={formatTime}
         />
       ) : null}
 

@@ -14,12 +14,15 @@ import { listOpenClawChatSessions } from "./openclaw_session_catalog.ts";
 import { SkillInterceptionStore } from "./skill_interception_store.ts";
 import { readUtf8File } from "./file_reader.ts";
 import { readDecisionsPage } from "./decision_history.ts";
+import { buildClawGuardFindings } from "./claw_guard_detector.ts";
+import { buildClawGuardFixPlan, toClawGuardPreviewPayload } from "./claw_guard_fix_planner.ts";
 import {
   listDirectoryBrowseRoots,
   listDirectoryChildren,
   listFileRuleDirectoryOptions,
   normalizeBrowsePath,
 } from "./file_rule_directory_browser.ts";
+import { OpenClawConfigClient } from "./openclaw_config_client.ts";
 import {
   localize,
   readBody,
@@ -86,6 +89,123 @@ export function handleApi(
     } catch (error) {
       sendServerError(res, error);
     }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/hardening/status") {
+    void (async () => {
+      const client = new OpenClawConfigClient(runtime);
+      try {
+        const snapshot = await client.readConfigSnapshot({ fast: true });
+        const result = buildClawGuardFindings(snapshot, locale);
+        sendJson(res, 200, {
+          scanned_at: new Date().toISOString(),
+          config_source: snapshot.source,
+          config_path: snapshot.configPath,
+          gateway_online: snapshot.gatewayOnline,
+          read_only: snapshot.writeSupported !== true,
+          ...(snapshot.writeReason ? { write_reason: snapshot.writeReason } : {}),
+          summary: {
+            risk_count: result.findings.length,
+            direct_fix_count: result.findings.filter((item) => item.repairKind === "direct").length,
+            restart_required_count: result.findings.filter((item) => item.restartRequired).length,
+            passed_count: result.passed.length,
+          },
+          findings: result.findings,
+          passed: result.passed,
+        });
+      } catch (error) {
+        sendJson(res, 200, {
+          scanned_at: new Date().toISOString(),
+          gateway_online: false,
+          read_only: true,
+          error: localize(
+            locale,
+            `当前无法读取 OpenClaw 配置。${String(error)}`,
+            `OpenClaw config is currently unreadable. ${String(error)}`,
+          ),
+          summary: {
+            risk_count: 0,
+            direct_fix_count: 0,
+            restart_required_count: 0,
+            passed_count: 0,
+          },
+          findings: [],
+          passed: [],
+        });
+      }
+    })();
+    return;
+  }
+
+  const hardeningRouteMatch = url.pathname.match(/^\/api\/hardening\/fixes\/([^/]+?)\/(preview|apply)$/);
+  if (req.method === "POST" && hardeningRouteMatch) {
+    const findingId = decodeURIComponent(hardeningRouteMatch[1]);
+    const action = hardeningRouteMatch[2];
+
+    void (async () => {
+      try {
+        const client = new OpenClawConfigClient(runtime);
+        const snapshot = await client.readConfigSnapshot({
+          fast: action === "preview",
+          requireWritable: action === "apply",
+        });
+        const body = await readBody(req);
+        const options =
+          body.options && typeof body.options === "object" && !Array.isArray(body.options)
+            ? (body.options as Record<string, unknown>)
+            : undefined;
+        const plan = buildClawGuardFixPlan({
+          snapshot,
+          findingId,
+          locale,
+          ...(options ? { options } : {}),
+        });
+
+        if (action === "preview") {
+          sendJson(res, 200, toClawGuardPreviewPayload(plan));
+          return;
+        }
+
+        if (!snapshot.writeSupported || !snapshot.baseHash) {
+          throw new Error(
+            snapshot.writeReason
+              || localize(locale, "当前只能查看分析结果，不能直接应用修复。", "This page is read-only and cannot apply repairs."),
+          );
+        }
+        if (!plan.canApply || !plan.patch) {
+          throw new Error(
+            plan.applyDisabledReason
+              || localize(locale, "当前修复方案不能直接应用。", "This repair plan cannot be applied right now."),
+          );
+        }
+
+        await client.applyPatch({
+          patch: plan.patch,
+          baseHash: snapshot.baseHash,
+          note: `securityclaw-hardening:${findingId}`,
+        });
+
+        sendJson(res, 200, {
+          ok: true,
+          message: plan.restartRequired
+            ? localize(
+                locale,
+                "修复已写入 OpenClaw 配置，gateway 会按配置写入流程自动重启。",
+                "The repair was written to OpenClaw config and the gateway will restart through the config-write flow.",
+              )
+            : localize(
+                locale,
+                "修复已写入 OpenClaw 配置。",
+                "The repair was written to OpenClaw config.",
+              ),
+          restart_required: plan.restartRequired,
+          finding_id: findingId,
+        });
+      } catch (error) {
+        sendClientError(res, error);
+      }
+    })();
     return;
   }
 

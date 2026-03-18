@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 export type RunProcessSyncOptions = {
   cwd?: string;
   encoding?: BufferEncoding;
+  env?: NodeJS.ProcessEnv;
   stdio?: "ignore" | "inherit" | "pipe";
   timeout?: number;
   windowsHide?: boolean;
@@ -35,4 +36,3 @@ export function runProcessSync(
 ): RunProcessSyncResult {
   return runProcessSyncImpl(command, args, options);
 }
-

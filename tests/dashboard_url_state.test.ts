@@ -10,11 +10,11 @@ import {
 test("dashboard url state reads tab from query and falls back to hash", () => {
   assert.deepEqual(
     readAdminDashboardUrlState({
-      search: "?tab=events&decision=block&page=3",
+      search: "?tab=hardening&decision=block&page=3",
       hash: "#rules",
     }),
     {
-      tab: "events",
+      tab: "hardening",
       decisionFilter: "block",
       decisionPage: 3,
     },
@@ -47,16 +47,16 @@ test("dashboard search builder keeps unrelated params and drops default view sta
   assert.equal(
     buildAdminDashboardSearch({
       currentSearch: "?theme=dark&locale=zh-CN",
-      tab: "events",
+      tab: "hardening",
       decisionFilter: "challenge",
       decisionPage: 2,
     }),
-    "?theme=dark&locale=zh-CN&tab=events&decision=challenge&page=2",
+    "?theme=dark&locale=zh-CN&tab=hardening&decision=challenge",
   );
 
   assert.equal(
     buildAdminDashboardSearch({
-      currentSearch: "?theme=dark&locale=zh-CN&tab=events&decision=challenge&page=2",
+      currentSearch: "?theme=dark&locale=zh-CN&tab=hardening&decision=challenge",
       tab: "skills",
       decisionFilter: "challenge",
       decisionPage: 2,

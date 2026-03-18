@@ -19,9 +19,8 @@ import {
   type StoredApprovalRecord,
   createApprovalRequestKey,
 } from "./src/approvals/chat_approval_store.ts";
-import { DecisionEngine } from "./src/engine/decision_engine.ts";
 import { DlpEngine } from "./src/engine/dlp_engine.ts";
-import { RuleEngine } from "./src/engine/rule_engine.ts";
+import { PolicyPipeline, matchedPolicyRuleIds } from "./src/engine/policy_pipeline.ts";
 import { EventEmitter, HttpEventSink } from "./src/events/emitter.ts";
 import {
   PluginConfigParser,
@@ -41,7 +40,6 @@ import {
   isPathLikeCandidate,
   resolvePathCandidate,
 } from "./src/domain/services/path_candidate_inference.ts";
-import { defaultFileRuleReasonCode, matchFileRule } from "./src/domain/services/file_rule_registry.ts";
 import { hydrateSensitivePathConfig } from "./src/domain/services/sensitive_path_registry.ts";
 import { inferShellFilesystemSemantic } from "./src/domain/services/shell_filesystem_inference.ts";
 import { inferSensitivityLabels } from "./src/domain/services/sensitivity_label_inference.ts";
@@ -54,15 +52,13 @@ import type {
   DecisionSource,
   DlpFinding,
   ResourceScope,
-  RuleMatch,
   SecurityClawConfig,
   SecurityDecisionEvent
 } from "./src/types.ts";
 
 type RuntimeDependencies = {
   config: SecurityClawConfig;
-  ruleEngine: RuleEngine;
-  decisionEngine: DecisionEngine;
+  policyPipeline: PolicyPipeline;
   accountPolicyEngine: AccountPolicyEngine;
   dlpEngine: DlpEngine;
   emitter: EventEmitter;
@@ -1758,8 +1754,7 @@ function applyPluginConfigOverrides(config: SecurityClawConfig, pluginConfig: Se
 function buildRuntime(snapshot: LiveConfigSnapshot): RuntimeDependencies {
   return {
     config: snapshot.config,
-    ruleEngine: new RuleEngine(snapshot.config.policies),
-    decisionEngine: new DecisionEngine(snapshot.config),
+    policyPipeline: new PolicyPipeline(snapshot.config),
     accountPolicyEngine: new AccountPolicyEngine(snapshot.override?.account_policies),
     dlpEngine: new DlpEngine(snapshot.config.dlp),
     emitter: createEventEmitter(snapshot.config),
@@ -1900,13 +1895,6 @@ function summarizeForLog(value: unknown, maxLength: number): string {
   } catch {
     return "[unserializable]";
   }
-}
-
-function matchedRuleIds(matches: RuleMatch[]): string {
-  if (matches.length === 0) {
-    return "-";
-  }
-  return matches.map((match) => match.rule.rule_id).join(",");
 }
 
 function normalizeToolName(rawToolName: string): string {
@@ -2283,26 +2271,10 @@ const plugin = {
         let approvalBlockReason: string | undefined;
 
         if (!protectedStorageAccess) {
-          const matchedFileRule = matchFileRule(decisionContext.resource_paths, current.config.file_rules);
-          const matches = matchedFileRule ? [] : current.ruleEngine.match(decisionContext);
-          const outcome = matchedFileRule
-            ? {
-                decision: matchedFileRule.decision,
-                decision_source: "file_rule" as const,
-                reason_codes: matchedFileRule.reason_codes?.length
-                  ? [...matchedFileRule.reason_codes]
-                  : [defaultFileRuleReasonCode(matchedFileRule.decision)],
-                matched_rules: [],
-                ...(matchedFileRule.decision === "challenge"
-                  ? { challenge_ttl_seconds: current.config.defaults.approval_ttl_seconds }
-                  : {}),
-              }
-            : current.decisionEngine.evaluate(decisionContext, matches);
-          const ruleIds = matchedFileRule
-            ? [`file_rule:${matchedFileRule.id}`]
-            : matches.map((match) => match.rule.rule_id);
-          rules = matchedFileRule ? `file_rule:${matchedFileRule.id}` : matchedRuleIds(matches);
-          accountOverride = matchedFileRule ? undefined : current.accountPolicyEngine.evaluate(approvalSubject);
+          const outcome = current.policyPipeline.evaluate(decisionContext, current.config.file_rules);
+          const ruleIds = matchedPolicyRuleIds(outcome);
+          rules = ruleIds.length > 0 ? ruleIds.join(",") : "-";
+          accountOverride = outcome.matched_file_rule ? undefined : current.accountPolicyEngine.evaluate(approvalSubject);
           const approvalRequestKey = createApprovalRequestKey({
             policy_version: current.config.policy_version,
             scope: decisionContext.scope,

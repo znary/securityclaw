@@ -7,7 +7,9 @@ import { copyFileSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 
 import plugin from "../index.ts";
+import { ConfigManager } from "../src/config/loader.ts";
 import { StrategyStore } from "../src/config/strategy_store.ts";
+import { buildStrategyV2FromConfig } from "../src/domain/services/strategy_model.ts";
 import { resolveDefaultSecurityClawDbPath } from "../src/infrastructure/config/plugin_config_parser.ts";
 
 type HookHandler = (...args: unknown[]) => unknown;
@@ -526,15 +528,17 @@ test("gateway file rules with allow bypass downstream filesystem blocks", async 
   try {
     const writer = new StrategyStore(harness.dbPath);
     try {
+      const strategy = buildStrategyV2FromConfig(ConfigManager.fromFile("./config/policy.default.yaml").getConfig());
+      strategy.exceptions.directory_overrides = [
+        {
+          id: "user-browser-allow",
+          directory: "/Users/liuzhuangm4/Library/Application Support/Google/Chrome",
+          decision: "allow",
+          reason_codes: ["USER_FILE_RULE_ALLOW"],
+        }
+      ];
       writer.writeOverride({
-        file_rules: [
-          {
-            id: "user-browser-allow",
-            directory: "/Users/liuzhuangm4/Library/Application Support/Google/Chrome",
-            decision: "allow",
-            reason_codes: ["USER_FILE_RULE_ALLOW"],
-          }
-        ]
+        strategy
       });
     } finally {
       writer.close();

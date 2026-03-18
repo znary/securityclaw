@@ -1,18 +1,14 @@
 import { existsSync, readFileSync } from "node:fs";
 
 import {
-  applySensitivePathStrategyOverride,
   hydrateSensitivePathConfig,
-  normalizeSensitivePathStrategyOverride,
 } from "../domain/services/sensitive_path_registry.ts";
 import { normalizeFileRules } from "../domain/services/file_rule_registry.ts";
+import { compileStrategyV2, type StrategyV2 } from "../domain/services/strategy_model.ts";
 import type {
   AccountPolicyRecord,
   DlpConfig,
-  FileRule,
-  PolicyRule,
   SecurityClawConfig,
-  SensitivePathStrategyOverride,
 } from "../types.ts";
 import { validateConfig } from "./validator.ts";
 
@@ -21,10 +17,8 @@ export type RuntimeOverride = {
   environment?: string | undefined;
   policy_version?: string | undefined;
   defaults?: Partial<SecurityClawConfig["defaults"]> | undefined;
-  policies?: PolicyRule[] | undefined;
+  strategy?: StrategyV2 | undefined;
   account_policies?: AccountPolicyRecord[] | undefined;
-  sensitivity?: SensitivePathStrategyOverride | undefined;
-  file_rules?: FileRule[] | undefined;
   dlp?: (Partial<Omit<DlpConfig, "patterns">> & { patterns?: DlpConfig["patterns"]; }) | undefined;
 };
 
@@ -44,6 +38,7 @@ export function readRuntimeOverride(overridePath: string): RuntimeOverride | und
 }
 
 export function applyRuntimeOverride(base: SecurityClawConfig, override: RuntimeOverride): SecurityClawConfig {
+  const compiledStrategy = override.strategy ? compileStrategyV2(base, override.strategy) : undefined;
   const baseSensitivity = hydrateSensitivePathConfig(base.sensitivity);
   const merged: SecurityClawConfig = {
     ...base,
@@ -58,9 +53,9 @@ export function applyRuntimeOverride(base: SecurityClawConfig, override: Runtime
       ...(override.dlp ?? {}),
       patterns: override.dlp?.patterns ?? base.dlp.patterns
     },
-    policies: override.policies ?? base.policies,
-    sensitivity: applySensitivePathStrategyOverride(baseSensitivity, normalizeSensitivePathStrategyOverride(override.sensitivity)),
-    file_rules: override.file_rules !== undefined ? normalizeFileRules(override.file_rules) : base.file_rules,
+    policies: compiledStrategy?.policies ?? base.policies,
+    sensitivity: compiledStrategy?.sensitivity ?? baseSensitivity,
+    file_rules: compiledStrategy?.file_rules ?? normalizeFileRules(base.file_rules),
   };
   return validateConfig(merged as unknown as Record<string, unknown>);
 }

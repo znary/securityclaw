@@ -310,6 +310,21 @@ const TOOL_GROUP_TEXT = {
   business: { "zh-CN": "业务系统访问", en: "Business System Access" }
 };
 
+const CAPABILITY_TEXT = {
+  runtime: { "zh-CN": "Runtime", en: "Runtime" },
+  filesystem: { "zh-CN": "Filesystem", en: "Filesystem" },
+  network: { "zh-CN": "Network", en: "Network" },
+  browser: { "zh-CN": "Browser", en: "Browser" },
+  messaging: { "zh-CN": "Messaging", en: "Messaging" },
+  archive: { "zh-CN": "Archive", en: "Archive" },
+  media: { "zh-CN": "Media", en: "Media" },
+  business: { "zh-CN": "Business", en: "Business" },
+  automation: { "zh-CN": "Automation", en: "Automation" },
+  memory: { "zh-CN": "Memory", en: "Memory" },
+  nodes: { "zh-CN": "Nodes", en: "Nodes" },
+  sessions: { "zh-CN": "Sessions", en: "Sessions" }
+};
+
 const DESTINATION_TYPE_TEXT = {
   public: { "zh-CN": "公网", en: "Public Internet" },
   personal_storage: { "zh-CN": "个人网盘", en: "Personal Storage" },
@@ -680,10 +695,7 @@ async function getJson(url) {
 }
 
 function extractPolicies(strategyPayload) {
-  const list = strategyPayload?.strategy?.policies;
-  return Array.isArray(list)
-    ? clone(list).map((policy) => ({ ...policy, enabled: true }))
-    : [];
+  return flattenStrategyRules(extractStrategyModel(strategyPayload));
 }
 
 function normalizeDirectoryPathKey(value) {
@@ -735,11 +747,139 @@ function normalizeFileRules(rules) {
 }
 
 function extractFileRules(strategyPayload) {
-  return normalizeFileRules(strategyPayload?.strategy?.file_rules);
+  return normalizeFileRules(extractStrategyModel(strategyPayload)?.exceptions?.directory_overrides);
 }
 
 function serializeFileRules(rules) {
   return JSON.stringify(normalizeFileRules(rules));
+}
+
+function normalizeStrategyModel(strategyModel) {
+  if (!strategyModel || typeof strategyModel !== "object") {
+    return {
+      version: "v2",
+      tool_policy: {
+        capabilities: []
+      },
+      classifiers: {
+        disabled_builtin_ids: [],
+        custom_sensitive_paths: [],
+        volume_thresholds: {
+          bulk_file_count: 20,
+          bulk_bytes: 1000000,
+          bulk_record_count: 100
+        }
+      },
+      exceptions: {
+        directory_overrides: []
+      }
+    };
+  }
+  const capabilities = Array.isArray(strategyModel?.tool_policy?.capabilities)
+    ? clone(strategyModel.tool_policy.capabilities)
+    : [];
+  const directoryOverrides = normalizeFileRules(strategyModel?.exceptions?.directory_overrides);
+  return {
+    version: "v2",
+    tool_policy: {
+      capabilities
+    },
+    classifiers: {
+      disabled_builtin_ids: Array.isArray(strategyModel?.classifiers?.disabled_builtin_ids)
+        ? clone(strategyModel.classifiers.disabled_builtin_ids)
+        : [],
+      custom_sensitive_paths: Array.isArray(strategyModel?.classifiers?.custom_sensitive_paths)
+        ? clone(strategyModel.classifiers.custom_sensitive_paths)
+        : [],
+      volume_thresholds: strategyModel?.classifiers?.volume_thresholds
+        ? clone(strategyModel.classifiers.volume_thresholds)
+        : {
+            bulk_file_count: 20,
+            bulk_bytes: 1000000,
+            bulk_record_count: 100
+          }
+    },
+    exceptions: {
+      directory_overrides: directoryOverrides
+    }
+  };
+}
+
+function extractStrategyModel(strategyPayload) {
+  return normalizeStrategyModel(strategyPayload?.strategy?.model);
+}
+
+function flattenStrategyRules(strategyModel) {
+  const capabilities = toArray(strategyModel?.tool_policy?.capabilities);
+  return capabilities.flatMap((capability) =>
+    toArray(capability?.rules).map((rule) => ({
+      ...clone(rule),
+      capability_id: capability?.capability_id,
+      enabled: rule?.enabled !== false,
+      match: clone(rule?.context || {})
+    }))
+  );
+}
+
+function updateStrategyRuleDecision(strategyModel, ruleId, decision) {
+  const nextStrategy = normalizeStrategyModel(strategyModel);
+  nextStrategy.tool_policy.capabilities = nextStrategy.tool_policy.capabilities.map((capability) => ({
+    ...capability,
+    rules: toArray(capability?.rules).map((rule) =>
+      rule?.rule_id === ruleId
+        ? {
+            ...rule,
+            decision,
+            enabled: true
+          }
+        : rule
+    )
+  }));
+  return nextStrategy;
+}
+
+function updateStrategyCapabilityDefaultDecision(strategyModel, capabilityId, decision) {
+  const nextStrategy = normalizeStrategyModel(strategyModel);
+  nextStrategy.tool_policy.capabilities = nextStrategy.tool_policy.capabilities.map((capability) =>
+    capability?.capability_id === capabilityId
+      ? {
+          ...capability,
+          default_decision: decision
+        }
+      : capability
+  );
+  return nextStrategy;
+}
+
+function strategyDirectoryOverrides(strategyModel) {
+  return normalizeFileRules(strategyModel?.exceptions?.directory_overrides);
+}
+
+function withStrategyDirectoryOverrides(strategyModel, directoryOverrides) {
+  const nextStrategy = normalizeStrategyModel(strategyModel);
+  nextStrategy.exceptions = {
+    ...(nextStrategy.exceptions || {}),
+    directory_overrides: normalizeFileRules(directoryOverrides)
+  };
+  return nextStrategy;
+}
+
+function strategyRuleEntries(strategyModel) {
+  const capabilities = toArray(strategyModel?.tool_policy?.capabilities);
+  return capabilities.flatMap((capability) =>
+    toArray(capability?.rules).map((rule, index) => ({
+      key: `${capability?.capability_id || "unknown"}:${rule?.rule_id || index}`,
+      capability,
+      rule,
+      index
+    }))
+  );
+}
+
+function strategyApprovalEntries(strategyModel) {
+  return strategyRuleEntries(strategyModel).filter(
+    (entry) => entry.rule?.decision === "challenge" || entry.rule?.approval_requirements
+  );
 }
 
 function normalizeDirectoryPickerEntries(entries) {
@@ -863,6 +1003,11 @@ function ruleDescription(policy) {
 function controlDomainLabel(domain) {
   if (!domain) return ui("未分类", "Uncategorized");
   return readLocalized(CONTROL_DOMAIN_TEXT, domain, domain);
+}
+
+function capabilityLabel(capabilityId) {
+  if (!capabilityId) return ui("未分类能力", "Uncategorized Capability");
+  return readLocalized(CAPABILITY_TEXT, capabilityId, capabilityId);
 }
 
 function severityLabel(severity) {
@@ -1421,10 +1566,8 @@ function App() {
   const [systemTheme, setSystemTheme] = useState(readSystemTheme);
   const theme = useMemo(() => resolveAdminTheme(themePreference, systemTheme), [themePreference, systemTheme]);
   const [statusPayload, setStatusPayload] = useState(null);
-  const [policies, setPolicies] = useState([]);
-  const [publishedPolicies, setPublishedPolicies] = useState([]);
-  const [fileRules, setFileRules] = useState([]);
-  const [publishedFileRules, setPublishedFileRules] = useState([]);
+  const [strategyModel, setStrategyModel] = useState(() => normalizeStrategyModel(null));
+  const [publishedStrategyModel, setPublishedStrategyModel] = useState(() => normalizeStrategyModel(null));
   const [selectedFileDirectory, setSelectedFileDirectory] = useState("");
   const [newFileRuleDecision, setNewFileRuleDecision] = useState("challenge");
   const [filePickerOpen, setFilePickerOpen] = useState(false);
@@ -1468,6 +1611,11 @@ function App() {
   const [sidePanelOffset, setSidePanelOffset] = useState(0);
   const rulesColumnRef = useRef(null);
   const firstRuleRef = useRef(null);
+  const policies = useMemo(() => flattenStrategyRules(strategyModel), [strategyModel]);
+  const publishedPolicies = useMemo(() => flattenStrategyRules(publishedStrategyModel), [publishedStrategyModel]);
+  const fileRules = useMemo(() => strategyDirectoryOverrides(strategyModel), [strategyModel]);
+  const publishedFileRules = useMemo(() => strategyDirectoryOverrides(publishedStrategyModel), [publishedStrategyModel]);
+  const capabilityPolicies = useMemo(() => toArray(strategyModel?.tool_policy?.capabilities), [strategyModel]);
 
   const hasPendingRuleChanges = useMemo(
     () => JSON.stringify(policies) !== JSON.stringify(publishedPolicies),
@@ -1489,20 +1637,37 @@ function App() {
   );
   const hasPendingChanges = hasPendingRuleChanges || hasPendingFileRuleChanges || hasPendingAccountChanges;
   const hasPendingDashboardChanges = hasPendingChanges || hasPendingSkillPolicyChanges;
-  const groupedPolicies = useMemo(() => {
-    const groups = new Map();
-    policies.forEach((policy, index) => {
-      const key = policy?.control_domain || policy?.group || "general";
-      const list = groups.get(key) || [];
-      list.push({ policy, index });
-      groups.set(key, list);
-    });
-    return Array.from(groups.entries());
-  }, [policies]);
-  const policyEntries = useMemo(
-    () => policies.map((policy, index) => ({ key: policy?.rule_id || String(index), policy, index })),
-    [policies]
+  const groupedPolicies = useMemo(
+    () =>
+      capabilityPolicies.map((capability, index) => [
+        capability?.capability_id || `capability-${index}`,
+        toArray(capability?.rules).map((rule, ruleIndex) => ({
+          capability,
+          policy: {
+            ...clone(rule),
+            match: clone(rule?.context || {}),
+            enabled: rule?.enabled !== false
+          },
+          index: ruleIndex
+        }))
+      ]),
+    [capabilityPolicies]
   );
+  const policyEntries = useMemo(
+    () =>
+      strategyRuleEntries(strategyModel).map((entry) => ({
+        key: entry.key,
+        policy: {
+          ...clone(entry.rule),
+          match: clone(entry.rule?.context || {}),
+          enabled: entry.rule?.enabled !== false
+        },
+        index: entry.index,
+        capability: entry.capability
+      })),
+    [strategyModel]
+  );
+  const approvalEntries = useMemo(() => strategyApprovalEntries(strategyModel), [strategyModel]);
   const eligibleSessions = useMemo(
     () => availableSessions,
     [availableSessions]
@@ -1665,16 +1830,14 @@ function App() {
         getJson("/api/accounts")
       ]);
       setStatusPayload(status);
-      const nextPolicies = extractPolicies(strategy);
+      const nextStrategyModel = extractStrategyModel(strategy);
       const nextFileRules = extractFileRules(strategy);
       const nextAccountPolicies = extractAccountPolicies(accounts);
-      setPublishedPolicies(nextPolicies);
-      setPublishedFileRules(nextFileRules);
+      setPublishedStrategyModel(nextStrategyModel);
       setPublishedAccountPolicies(nextAccountPolicies);
       setAvailableSessions(extractChatSessions(accounts));
       if (syncRules === true) {
-        setPolicies(clone(nextPolicies));
-        setFileRules(clone(nextFileRules));
+        setStrategyModel(clone(nextStrategyModel));
         setSelectedFileDirectory((current) => current || nextFileRules[0]?.directory || "");
       }
       if (syncAccounts === true) {
@@ -1984,15 +2147,17 @@ function App() {
   const trendTotalCount = trendTotals.reduce((sum, value) => sum + value, 0);
   const trendRiskCount = trendRisks.reduce((sum, value) => sum + value, 0);
 
-  const saveStrategy = useCallback(async (nextPolicies, nextFileRules) => {
-    const normalizedPolicies = nextPolicies.map((policy) => ({ ...policy, enabled: true }));
-    const normalizedFileRules = normalizeFileRules(nextFileRules).map((rule) => ({
+  const saveStrategy = useCallback(async (nextStrategyModel) => {
+    const normalizedStrategy = normalizeStrategyModel(nextStrategyModel);
+    normalizedStrategy.exceptions.directory_overrides = normalizeFileRules(
+      normalizedStrategy.exceptions.directory_overrides
+    ).map((rule) => ({
       ...rule,
       reason_codes: rule.reason_codes?.length ? rule.reason_codes : [defaultFileRuleReasonCode(rule.decision)],
     }));
     setSaving(true);
     setError("");
-    setMessage(ui("规则与文件规则自动保存中...", "Saving policy and file rule changes..."));
+    setMessage(ui("策略模型自动保存中...", "Saving strategy model changes..."));
     try {
       const response = await fetch("/api/strategy", {
         method: "PUT",
@@ -2002,8 +2167,7 @@ function App() {
           "x-securityclaw-locale": activeLocale
         },
         body: JSON.stringify({
-          policies: normalizedPolicies,
-          file_rules: normalizedFileRules
+          strategy: normalizedStrategy
         })
       });
       const payload = await response.json();
@@ -2014,11 +2178,10 @@ function App() {
       const details = `${payload.message || ""}${suffix}`.trim();
       setMessage(
         details
-          ? `${ui("规则与文件规则已自动保存。", "Policies and file rules saved automatically.")} ${details}`
-          : ui("规则与文件规则已自动保存。", "Policies and file rules saved automatically.")
+          ? `${ui("策略已自动保存。", "Strategy saved automatically.")} ${details}`
+          : ui("策略已自动保存。", "Strategy saved automatically.")
       );
-      setPublishedPolicies(clone(normalizedPolicies));
-      setPublishedFileRules(clone(normalizedFileRules));
+      setPublishedStrategyModel(clone(normalizedStrategy));
       await loadData({ syncRules: false, syncAccounts: false, silent: true });
     } catch (saveError) {
       setError(String(saveError));
@@ -2139,15 +2302,15 @@ function App() {
     }
     setMessage(
       ui(
-        "检测到规则或文件规则变更，正在自动保存...",
-        "Rule or file rule changes detected. Saving automatically..."
+        "检测到策略模型变更，正在自动保存...",
+        "Strategy model changes detected. Saving automatically..."
       )
     );
     const timer = setTimeout(() => {
-      void saveStrategy(policies, fileRules);
+      void saveStrategy(strategyModel);
     }, 500);
     return () => clearTimeout(timer);
-  }, [fileRules, hasPendingFileRuleChanges, hasPendingRuleChanges, loading, policies, saveStrategy, saving]);
+  }, [hasPendingFileRuleChanges, hasPendingRuleChanges, loading, saveStrategy, saving, strategyModel]);
 
   useEffect(() => {
     if (loading || saving || !hasPendingAccountChanges) {
@@ -2332,13 +2495,8 @@ function App() {
     }
   }
 
-  function onDecisionChange(index, decision) {
-    setPolicies((current) => {
-      const next = clone(current);
-      next[index].decision = decision;
-      next[index].enabled = true;
-      return next;
-    });
+  function onDecisionChange(ruleId, decision) {
+    setStrategyModel((current) => updateStrategyRuleDecision(current, ruleId, decision));
   }
 
   function onRuleCardKeyDown(event, entryKey) {
@@ -2412,15 +2570,18 @@ function App() {
     if (!normalizedDirectory) {
       return;
     }
-    setFileRules((current) => {
-      const normalizedCurrent = normalizeFileRules(current);
+    setStrategyModel((currentStrategy) => {
+      const normalizedCurrent = strategyDirectoryOverrides(currentStrategy);
       const key = normalizeDirectoryPathKey(normalizedDirectory);
       const existing = normalizedCurrent.find((rule) => normalizeDirectoryPathKey(rule.directory) === key);
       if (!normalizedDecision) {
-        return normalizedCurrent.filter((rule) => normalizeDirectoryPathKey(rule.directory) !== key);
+        return withStrategyDirectoryOverrides(
+          currentStrategy,
+          normalizedCurrent.filter((rule) => normalizeDirectoryPathKey(rule.directory) !== key)
+        );
       }
       if (!DECISION_OPTIONS.includes(normalizedDecision)) {
-        return normalizedCurrent;
+        return currentStrategy;
       }
       const nextRule = {
         id: existing?.id || `file-rule-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
@@ -2429,7 +2590,7 @@ function App() {
         reason_codes: [defaultFileRuleReasonCode(normalizedDecision)],
       };
       const others = normalizedCurrent.filter((rule) => normalizeDirectoryPathKey(rule.directory) !== key);
-      return normalizeFileRules([...others, nextRule]);
+      return withStrategyDirectoryOverrides(currentStrategy, [...others, nextRule]);
     });
   }
 
@@ -3038,28 +3199,123 @@ function App() {
           >
             <div className="panel-card">
               <div className="card-head">
-                <h2>{ui("规则策略", "Policies")}</h2>
+                <h2>{ui("策略", "Strategy")}</h2>
                 <div className="rule-meta">
-                  <span className="meta-pill">{ui("分组", "Groups")} {groupedPolicies.length}</span>
-                  <span className="meta-pill">{ui("规则", "Rules")} {policies.length}</span>
-                  <span className="meta-pill">{ui("文件规则", "File Rules")} {normalizedFileRules.length}</span>
+                  <span className="meta-pill">{ui("能力", "Capabilities")} {capabilityPolicies.length}</span>
+                  <span className="meta-pill">{ui("上下文护栏", "Guardrails")} {policies.length}</span>
+                  <span className="meta-pill">{ui("目录例外", "Directory Overrides")} {normalizedFileRules.length}</span>
                 </div>
               </div>
 
-              <section className="sensitive-path-panel" aria-label={ui("文件规则", "File rules")}>
-                <div className="sensitive-path-head">
+              <section className="rule-group" aria-label={ui("访问基线", "Access baseline")}>
+                <div className="card-head">
                   <div>
-                    <span className="eyebrow">{ui("文件规则", "File Rules")}</span>
-                    <h3>{ui("按目录定义最高优先级处理动作", "Set top-priority actions by directory")}</h3>
+                    <span className="eyebrow">{ui("Access", "Access")}</span>
+                    <h3>{ui("先看 capability，再看上下文护栏", "Capability first, then contextual guardrails")}</h3>
                     <p className="sensitive-path-intro">
                       {ui(
-                        "这里只需要选择目录和处理方式，不需要选择标签或匹配方式。文件规则优先级最高，设置为放行后后续策略不会再拦截。",
-                        "Choose a directory and a handling action only. No labels or match types are required. File rules are top priority, and allow bypasses later blocking policies."
+                        "策略页现在围绕 capability 组织。先定义默认态度，再查看哪些上下文会升级为提醒、审批或拦截。",
+                        "The strategy tab is now organized around capabilities. Define the baseline posture first, then inspect which contexts escalate to warn, challenge, or block."
+                      )}
+                    </p>
+                  </div>
+                </div>
+
+                {capabilityPolicies.length === 0 ? (
+                  <div className="chart-empty">{ui("暂无 capability 配置。", "No capability policies configured.")}</div>
+                ) : (
+                  capabilityPolicies.map((capability) => (
+                    <section key={capability.capability_id} className="rule-group">
+                      <div className="rule-head">
+                        <div>
+                          <div className="rule-title">{capabilityLabel(capability.capability_id)}</div>
+                          <div className="rule-desc">
+                            {ui(
+                              `默认态度是“${decisionLabel(capability.default_decision)}”，当前叠加 ${toArray(capability.rules).length} 条上下文护栏。`,
+                              `Default posture is "${decisionLabel(capability.default_decision)}" with ${toArray(capability.rules).length} contextual guardrails layered on top.`
+                            )}
+                          </div>
+                        </div>
+                        <div className="rule-head-side">
+                          <DecisionTag decision={capability.default_decision} />
+                          <span className="tag meta-tag">{ui("Baseline", "Baseline")}</span>
+                        </div>
+                      </div>
+
+                      <div className="rule-actions" role="group" aria-label={ui(`${capabilityLabel(capability.capability_id)} 默认策略`, `${capabilityLabel(capability.capability_id)} baseline policy`)}>
+                        {DECISION_OPTIONS.map((decision) => (
+                          <button
+                            key={`${capability.capability_id}-${decision}`}
+                            className={`rule-action-button ${decision} ${capability.default_decision === decision ? "active" : ""}`}
+                            type="button"
+                            aria-pressed={capability.default_decision === decision}
+                            onClick={() =>
+                              setStrategyModel((current) =>
+                                updateStrategyCapabilityDefaultDecision(current, capability.capability_id, decision)
+                              )
+                            }
+                          >
+                            {decisionLabel(decision)}
+                          </button>
+                        ))}
+                      </div>
+
+                      {toArray(capability.rules).length === 0 ? (
+                        <div className="chart-empty">{ui("当前 capability 没有额外上下文护栏。", "No extra contextual guardrails for this capability.")}</div>
+                      ) : (
+                        <div className="rules">
+                          {toArray(capability.rules).map((rule, index) => (
+                            <article key={`${capability.capability_id}:${rule.rule_id || index}`} className="rule">
+                              <div className="rule-head">
+                                <div className="rule-title">{policyTitle({ ...rule, match: rule.context }, index)}</div>
+                                <div className="rule-head-side">
+                                  <DecisionTag decision={rule.decision} />
+                                  <div className="rule-tags" aria-label={ui("规则标签", "Rule tags")}>
+                                    <span className="tag meta-tag">{controlDomainLabel(rule.control_domain || rule.group)}</span>
+                                    {rule.severity ? <span className={`tag meta-tag severity-${rule.severity}`}>{severityLabel(rule.severity)}</span> : null}
+                                    {rule.owner ? <span className="tag meta-tag">{rule.owner}</span> : null}
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="rule-actions" role="group" aria-label={ui(`规则 ${rule.rule_id || index + 1} 的策略动作`, `Policy actions for rule ${rule.rule_id || index + 1}`)}>
+                                {DECISION_OPTIONS.map((decision) => (
+                                  <button
+                                    key={`${rule.rule_id}-${decision}`}
+                                    className={`rule-action-button ${decision} ${rule.decision === decision ? "active" : ""}`}
+                                    type="button"
+                                    aria-pressed={rule.decision === decision}
+                                    onClick={() => onDecisionChange(rule.rule_id, decision)}
+                                  >
+                                    {decisionLabel(decision)}
+                                  </button>
+                                ))}
+                              </div>
+                              <div className="rule-desc">{ruleDescription({ ...rule, match: rule.context })}</div>
+                            </article>
+                          ))}
+                        </div>
+                      )}
+                    </section>
+                  ))
+                )}
+              </section>
+
+              <section className="sensitive-path-panel" aria-label={ui("例外", "Exceptions")}>
+                <div className="sensitive-path-head">
+                  <div>
+                    <span className="eyebrow">{ui("Exceptions", "Exceptions")}</span>
+                    <h3>{ui("目录例外和资源分类器", "Directory overrides and resource classifiers")}</h3>
+                    <p className="sensitive-path-intro">
+                      {ui(
+                        "目录例外单独成层，不再与 capability 基线混在一起。敏感路径仍然驱动上下文分类，但这里以分类器形式展示。",
+                        "Directory overrides now live in their own layer instead of mixing with the capability baseline. Sensitive paths still drive contextual classification, but are shown here as classifiers."
                       )}
                     </p>
                   </div>
                   <div className="rule-meta">
-                    <span className="meta-pill">{ui("规则数", "Rules")} {normalizedFileRules.length}</span>
+                    <span className="meta-pill">{ui("目录例外", "Directory Overrides")} {normalizedFileRules.length}</span>
+                    <span className="meta-pill">{ui("自定义敏感路径", "Custom Sensitive Paths")} {toArray(strategyModel?.classifiers?.custom_sensitive_paths).length}</span>
+                    <span className="meta-pill">{ui("禁用内建分类器", "Disabled Built-ins")} {toArray(strategyModel?.classifiers?.disabled_builtin_ids).length}</span>
                     <span className="meta-pill">{selectedFileDirectory ? ui("已选择目录", "Directory Selected") : ui("未选择目录", "No Directory Selected")}</span>
                   </div>
                 </div>
@@ -3095,53 +3351,86 @@ function App() {
                 {selectedDirectoryRuleExists ? (
                   <div className="sensitive-path-validation">
                     {ui(
-                      "当前目录已存在规则。若需调整，请在下方“已配置文件规则”列表中修改。",
-                      "A rule already exists for this directory. Edit it in the configured file rules list below."
+                      "当前目录已存在例外。若需调整，请在下方已配置目录例外列表中修改。",
+                      "A directory override already exists. Edit it in the configured list below."
                     )}
                   </div>
                 ) : null}
 
                 <div className="sensitive-path-note">
                   {ui(
-                    "通过“选择目录”打开目录浏览器，定位到目标目录后点“选择当前目录”。“添加”只创建新规则，已存在规则请在下方列表中调整。若目录设为 allow，后续策略不会再拦截。",
-                    "Use Choose Directory to open the browser, navigate to the target folder, then select current directory. Add only creates new rules; edit existing ones in the list below. If a directory is set to allow, downstream policies will not block it."
+                    "目录例外只覆盖目录层，不会替代 capability 护栏。若目录设为 allow，后续规则不再继续拦截该目录。",
+                    "Directory overrides only cover the directory layer and do not replace capability guardrails. If a directory is set to allow, downstream rules stop blocking that directory."
                   )}
                 </div>
 
                 {normalizedFileRules.length === 0 ? (
-                  <div className="chart-empty">{ui("当前没有配置文件规则。", "No file rules configured yet.")}</div>
+                  <div className="chart-empty">{ui("当前没有配置目录例外。", "No directory overrides configured yet.")}</div>
                 ) : (
                   <div className="sensitive-path-list">
-                    {normalizedFileRules.map((rule) => {
-                      return (
-                        <article key={rule.id} className="sensitive-path-item configured">
-                          <div className="sensitive-path-item-main">
-                            <div className="sensitive-path-item-pattern">{rule.directory}</div>
-                            <div className="sensitive-path-item-tags">
-                              <span className={`tag ${rule.decision}`}>{decisionLabel(rule.decision)}</span>
-                            </div>
+                    {normalizedFileRules.map((rule) => (
+                      <article key={rule.id} className="sensitive-path-item configured">
+                        <div className="sensitive-path-item-main">
+                          <div className="sensitive-path-item-pattern">{rule.directory}</div>
+                          <div className="sensitive-path-item-tags">
+                            <span className={`tag ${rule.decision}`}>{decisionLabel(rule.decision)}</span>
                           </div>
-                          <div className="file-rule-item-actions">
-                            <label className="sensitive-path-field file-rule-action-field">
-                              <span>{ui("处理方式", "Action")}</span>
-                              <select
-                                value={rule.decision}
-                                onChange={(event) => setDirectoryFileRuleDecision(rule.directory, event.target.value)}
-                              >
-                                {DECISION_OPTIONS.map((decisionOption) => (
-                                  <option key={decisionOption} value={decisionOption}>{decisionLabel(decisionOption)}</option>
-                                ))}
-                              </select>
-                            </label>
-                            <button className="ghost small" type="button" onClick={() => requestRemoveFileRule(rule.directory)}>
-                              {ui("删除", "Remove")}
-                            </button>
-                          </div>
-                        </article>
-                      );
-                    })}
+                        </div>
+                        <div className="file-rule-item-actions">
+                          <label className="sensitive-path-field file-rule-action-field">
+                            <span>{ui("处理方式", "Action")}</span>
+                            <select
+                              value={rule.decision}
+                              onChange={(event) => setDirectoryFileRuleDecision(rule.directory, event.target.value)}
+                            >
+                              {DECISION_OPTIONS.map((decisionOption) => (
+                                <option key={decisionOption} value={decisionOption}>{decisionLabel(decisionOption)}</option>
+                              ))}
+                            </select>
+                          </label>
+                          <button className="ghost small" type="button" onClick={() => requestRemoveFileRule(rule.directory)}>
+                            {ui("删除", "Remove")}
+                          </button>
+                        </div>
+                      </article>
+                    ))}
                   </div>
                 )}
+
+                <div className="rule-group">
+                  <h4 className="rule-group-title">{ui("资源分类器", "Resource Classifiers")}</h4>
+                  {toArray(strategyModel?.classifiers?.custom_sensitive_paths).length === 0 &&
+                  toArray(strategyModel?.classifiers?.disabled_builtin_ids).length === 0 ? (
+                    <div className="chart-empty">
+                      {ui("当前没有自定义敏感路径或被禁用的内建分类器。", "No custom sensitive paths or disabled built-in classifiers.")}
+                    </div>
+                  ) : (
+                    <div className="sensitive-path-list">
+                      {toArray(strategyModel?.classifiers?.custom_sensitive_paths).map((rule) => (
+                        <article key={rule.id} className="sensitive-path-item configured">
+                          <div className="sensitive-path-item-main">
+                            <div className="sensitive-path-item-pattern">{rule.pattern}</div>
+                            <div className="sensitive-path-item-tags">
+                              <span className="tag meta-tag">{rule.asset_label}</span>
+                              <span className="tag meta-tag">{rule.match_type}</span>
+                              <span className="tag allow">{ui("自定义", "Custom")}</span>
+                            </div>
+                          </div>
+                        </article>
+                      ))}
+                      {toArray(strategyModel?.classifiers?.disabled_builtin_ids).map((id) => (
+                        <article key={id} className="sensitive-path-item configured">
+                          <div className="sensitive-path-item-main">
+                            <div className="sensitive-path-item-pattern">{id}</div>
+                            <div className="sensitive-path-item-tags">
+                              <span className="tag warn">{ui("已禁用内建规则", "Built-in Disabled")}</span>
+                            </div>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  )}
+                </div>
 
                 {filePickerOpen ? (
                   <div className="directory-picker-backdrop" role="dialog" aria-modal="true" aria-label={ui("目录选择器", "Directory picker")} onClick={closeDirectoryPicker}>
@@ -3217,9 +3506,9 @@ function App() {
                     onClick={cancelRemoveFileRule}
                   >
                     <div className="confirm-dialog-card" onClick={(event) => event.stopPropagation()}>
-                      <h4>{ui("确认删除这条文件规则？", "Delete this file rule?")}</h4>
+                      <h4>{ui("确认删除这条目录例外？", "Delete this directory override?")}</h4>
                       <p className="confirm-dialog-text">
-                        {ui("删除后该目录将不再应用用户文件规则，会回落到后续策略判断。", "After deletion, this directory will no longer use the user file rule and will fall back to downstream policies.")}
+                        {ui("删除后该目录会回落到 capability 与上下文护栏继续判断。", "After deletion, the directory falls back to capability and contextual guardrails.")}
                       </p>
                       <div className="confirm-dialog-path">{fileRuleDeleteTarget}</div>
                       <div className="confirm-dialog-actions">
@@ -3235,122 +3524,46 @@ function App() {
                 ) : null}
               </section>
 
-              <div className={`rules-layout ${isRuleSideVisible ? "with-side" : ""}`}>
-                <div className="rules" ref={rulesColumnRef}>
-                  {policies.length === 0 ? (
-                    <div className="rule">{ui("暂无规则", "No rules configured")}</div>
-                  ) : (
-                    groupedPolicies.map(([group, entries]) => (
-                      <section key={group} className="rule-group">
-                        <h4 className="rule-group-title">{controlDomainLabel(group)}</h4>
-                        {entries.map(({ policy, index }) => {
-                          const entryKey = policy.rule_id || String(index);
-                          const isActive = entryKey === activeRuleKey;
-                          return (
-                            <article
-                              key={entryKey}
-                              className={`rule ${isActive ? "active" : ""}`}
-                              ref={entryKey === firstRuleKey ? firstRuleRef : null}
-                              role="button"
-                              tabIndex={0}
-                              aria-pressed={isActive}
-                              aria-controls="active-rule-example-panel"
-                              onClick={() => setActiveRuleKey(entryKey)}
-                              onKeyDown={(event) => onRuleCardKeyDown(event, entryKey)}
-                            >
-                              <div className="rule-head">
-                                <div className="rule-title">{policyTitle(policy, index)}</div>
-                                <div className="rule-head-side">
-                                  <DecisionTag decision={policy.decision} />
-                                  <div className="rule-tags" aria-label={ui("规则标签", "Rule tags")}>
-                                    <span className="tag meta-tag">{controlDomainLabel(policy.control_domain || policy.group)}</span>
-                                    {policy.severity ? <span className={`tag meta-tag severity-${policy.severity}`}>{severityLabel(policy.severity)}</span> : null}
-                                    {policy.owner ? <span className="tag meta-tag">{policy.owner}</span> : null}
-                                  </div>
-                                </div>
-                              </div>
-                              <div className="rule-actions" role="group" aria-label={ui(`规则 ${policy.rule_id || index + 1} 的策略动作`, `Policy actions for rule ${policy.rule_id || index + 1}`)}>
-                                {DECISION_OPTIONS.map((decision) => (
-                                  <button
-                                    key={decision}
-                                    className={`rule-action-button ${decision} ${policy.decision === decision ? "active" : ""}`}
-                                    type="button"
-                                    aria-pressed={policy.decision === decision}
-                                    onClick={(event) => {
-                                      stopRuleCardEvent(event);
-                                      onDecisionChange(index, decision);
-                                    }}
-                                    onKeyDown={stopRuleCardEvent}
-                                  >
-                                    {decisionLabel(decision)}
-                                  </button>
-                                ))}
-                              </div>
-                              <div className="rule-desc">{ruleDescription(policy)}</div>
-                            </article>
-                          );
-                        })}
-                      </section>
-                    ))
-                  )}
+              <section className="rule-group" aria-label={ui("审批", "Approvals")}>
+                <div className="card-head">
+                  <div>
+                    <span className="eyebrow">{ui("Approvals", "Approvals")}</span>
+                    <h3>{ui("审批要求和 break-glass 入口", "Approval requirements and break-glass flow")}</h3>
+                    <p className="sensitive-path-intro">
+                      {ui(
+                        "这里只列出 challenge 类护栏，方便快速查看工单要求、审批角色、TTL 和单次放行限制。",
+                        "This section isolates challenge guardrails so you can quickly inspect ticket requirements, approver roles, TTL, and single-use constraints."
+                      )}
+                    </p>
+                  </div>
+                  <div className="rule-meta">
+                    <span className="meta-pill">{ui("审批护栏", "Challenge Guardrails")} {approvalEntries.length}</span>
+                    <span className="meta-pill">{ui("账号例外", "Account Overrides")} {accountPolicies.length}</span>
+                  </div>
                 </div>
 
-                {isRuleSideVisible ? (
-                  <aside
-                    id="active-rule-example-panel"
-                    className="rule-side-panel"
-                    aria-live="polite"
-                    style={{ marginTop: `${sidePanelOffset}px` }}
-                  >
-                    <div className="rule-side-card">
-                      <div className="rule-side-head">
-                        <div className="rule-side-head-top">
-                          <span className="eyebrow">{ui("规则对话示例", "Rule Conversation Example")}</span>
-                          <button
-                            className="ghost small rule-side-close"
-                            type="button"
-                            onClick={() => setActiveRuleKey("")}
-                          >
-                            {ui("关闭", "Close")}
-                          </button>
+                {approvalEntries.length === 0 ? (
+                  <div className="chart-empty">{ui("当前没有需要审批的上下文护栏。", "No approval-requiring guardrails configured.")}</div>
+                ) : (
+                  <div className="rules">
+                    {approvalEntries.map((entry) => (
+                      <article key={entry.key} className="rule">
+                        <div className="rule-head">
+                          <div className="rule-title">{policyTitle({ ...entry.rule, match: entry.rule.context }, entry.index)}</div>
+                          <div className="rule-head-side">
+                            <DecisionTag decision={entry.rule.decision} />
+                            <span className="tag meta-tag">{capabilityLabel(entry.capability?.capability_id)}</span>
+                          </div>
                         </div>
-                        <h3>{policyTitle(activeRuleEntry.policy, activeRuleEntry.index)}</h3>
-                        <div className="rule-row">
-                          <DecisionTag decision={activeRuleEntry.policy.decision} />
-                          <span className="tag meta-tag">{controlDomainLabel(activeRuleEntry.policy.control_domain || activeRuleEntry.policy.group)}</span>
+                        <div className="rule-desc">{ruleDescription({ ...entry.rule, match: entry.rule.context })}</div>
+                        <div className="rule-desc">
+                          {approvalSummary(entry.rule.approval_requirements) || ui("未额外声明审批元数据。", "No extra approval metadata declared.")}
                         </div>
-                      </div>
-
-                      <div className="rule-side-notes">
-                        <section className="rule-side-note">
-                          <h5>{ui("什么时候会触发", "When It Triggers")}</h5>
-                          <p>{activeRuleGuide.trigger}</p>
-                        </section>
-                        <section className="rule-side-note">
-                          <h5>{ui("为什么更安全", "Why It Is Safer")}</h5>
-                          <p>{activeRuleGuide.securityGain}</p>
-                        </section>
-                        <section className="rule-side-note">
-                          <h5>{ui("会发生什么", "What Happens")}</h5>
-                          <p>{activeRuleGuide.userImpact}</p>
-                        </section>
-                      </div>
-
-                      <section className="rule-chat-panel" aria-label={ui("典型对话场景", "Typical Conversation")}>
-                        <h5>{ui("典型对话场景", "Typical Conversation")}</h5>
-                        <div className="rule-chat">
-                          {activeRuleConversation.map((line, lineIndex) => (
-                            <article key={`${line.role}-${lineIndex}`} className={`rule-message ${line.role}`}>
-                              <span className="rule-message-role">{line.label}</span>
-                              <p>{line.text}</p>
-                            </article>
-                          ))}
-                        </div>
-                      </section>
-                    </div>
-                  </aside>
-                ) : null}
-              </div>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </section>
             </div>
           </section>
         ) : null}

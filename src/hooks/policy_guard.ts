@@ -8,10 +8,9 @@ import type {
   SensitivePathRule,
 } from "../types.ts";
 import type { ApprovalFsm } from "../engine/approval_fsm.ts";
-import type { DecisionEngine } from "../engine/decision_engine.ts";
-import type { RuleEngine } from "../engine/rule_engine.ts";
 import { defaultFileRuleReasonCode, matchFileRule } from "../domain/services/file_rule_registry.ts";
 import { inferSensitivityLabels } from "../domain/services/sensitivity_label_inference.ts";
+import type { PolicyPipeline } from "../engine/policy_pipeline.ts";
 
 function buildSecurityContext(
   input: BeforeToolCallInput,
@@ -91,8 +90,7 @@ export function runPolicyGuard(
   policyVersion: string,
   traceId: string,
   nowIso: string,
-  ruleEngine: RuleEngine,
-  decisionEngine: DecisionEngine,
+  policyPipeline: PolicyPipeline,
   approvals: ApprovalFsm,
   sensitivePathRules: SensitivePathRule[] = [],
   fileRules: FileRule[] = [],
@@ -185,16 +183,7 @@ export function runPolicyGuard(
     }
   }
 
-  const matches = matchedFileRule ? [] : ruleEngine.match(context);
-  const outcome = matchedFileRule
-    ? {
-        decision: matchedFileRule.decision,
-        decision_source: "file_rule" as const,
-        reason_codes: fileRuleReasonCodes,
-        matched_rules: [],
-        challenge_ttl_seconds: decisionEngine.config.defaults.approval_ttl_seconds,
-      }
-    : decisionEngine.evaluate(context, matches);
+  const outcome = policyPipeline.evaluate(context, fileRules);
 
   let approval: ApprovalRecord | undefined;
   if (outcome.decision === "challenge") {

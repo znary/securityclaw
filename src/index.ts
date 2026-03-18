@@ -1,8 +1,7 @@
 import { ConfigManager } from "./config/loader.ts";
 import { ApprovalFsm } from "./engine/approval_fsm.ts";
-import { DecisionEngine } from "./engine/decision_engine.ts";
 import { DlpEngine } from "./engine/dlp_engine.ts";
-import { RuleEngine } from "./engine/rule_engine.ts";
+import { PolicyPipeline } from "./engine/policy_pipeline.ts";
 import { EventEmitter, HttpEventSink } from "./events/emitter.ts";
 import { runContextGuard } from "./hooks/context_guard.ts";
 import { runOutputGuard } from "./hooks/output_guard.ts";
@@ -38,8 +37,7 @@ type PluginResult = {
 
 type RuntimeDependencies = {
   config: ReturnType<ConfigManager["getConfig"]>;
-  ruleEngine: RuleEngine;
-  decisionEngine: DecisionEngine;
+  policyPipeline: PolicyPipeline;
   dlpEngine: DlpEngine;
 };
 
@@ -146,8 +144,7 @@ export function createSecurityClawPlugin(options: SecurityClawPluginOptions = {}
   function buildRuntime(config: ReturnType<ConfigManager["getConfig"]>): RuntimeDependencies {
     return {
       config,
-      ruleEngine: new RuleEngine(config.policies),
-      decisionEngine: new DecisionEngine(config),
+      policyPipeline: new PolicyPipeline(config),
       dlpEngine: new DlpEngine(config.dlp)
     };
   }
@@ -189,8 +186,7 @@ export function createSecurityClawPlugin(options: SecurityClawPluginOptions = {}
               current.config.policy_version,
               input.security_context?.trace_id ?? traceGenerator(),
               nowIso(now),
-              current.ruleEngine,
-              current.decisionEngine,
+              current.policyPipeline,
               approvals,
               current.config.sensitivity.path_rules,
               current.config.file_rules,

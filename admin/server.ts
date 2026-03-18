@@ -23,10 +23,10 @@ import {
 } from "../src/infrastructure/config/plugin_config_parser.ts";
 import { normalizeFileRules } from "../src/domain/services/file_rule_registry.ts";
 import {
-  hydrateSensitivePathConfig,
-  listRemovedBuiltinSensitivePathRules,
-  normalizeSensitivePathStrategyOverride,
-} from "../src/domain/services/sensitive_path_registry.ts";
+  buildStrategyV2FromConfig,
+  compileStrategyV2,
+  normalizeStrategyV2,
+} from "../src/domain/services/strategy_model.ts";
 import type { SecurityClawLocale } from "../src/i18n/locale.ts";
 import { pickLocalized, resolveSecurityClawLocale } from "../src/i18n/locale.ts";
 import { readSecurityClawAdminServerEnv, resolveSecurityClawAdminPort } from "../src/runtime/process_env.ts";
@@ -383,19 +383,15 @@ function readAccountPolicies(strategyStore: StrategyStore) {
   return AccountPolicyEngine.sanitize(strategyStore.readOverride()?.account_policies);
 }
 
-function readSensitivePathStrategy(
-  baseConfig: ReturnType<ConfigManager["getConfig"]>,
+function readStrategyModel(
+  effectiveConfig: ReturnType<ConfigManager["getConfig"]>,
   override: RuntimeOverride | undefined,
 ) {
-  const baseSensitivity = hydrateSensitivePathConfig(baseConfig.sensitivity);
-  const sensitivityOverride = normalizeSensitivePathStrategyOverride(override?.sensitivity);
-  return {
-    path_rules: baseConfig.sensitivity.path_rules,
-    effective_path_rules: baseSensitivity.path_rules,
-    custom_path_rules: sensitivityOverride?.custom_path_rules ?? [],
-    disabled_builtin_ids: sensitivityOverride?.disabled_builtin_ids ?? [],
-    removed_builtin_path_rules: listRemovedBuiltinSensitivePathRules(baseSensitivity, sensitivityOverride),
-  };
+  return normalizeStrategyV2(override?.strategy) ?? buildStrategyV2FromConfig(effectiveConfig);
+}
+
+function countStrategyRules(strategyModel: ReturnType<typeof readStrategyModel>): number {
+  return strategyModel.tool_policy.capabilities.reduce((sum, capability) => sum + capability.rules.length, 0);
 }
 
 function isExistingDirectory(value: string): boolean {
@@ -695,6 +691,7 @@ function handleApi(
   if (req.method === "GET" && url.pathname === "/api/strategy") {
     try {
       const { base, effective, override } = readEffectivePolicy(runtime, strategyStore);
+      const strategyModel = readStrategyModel(effective, override);
       sendJson(res, 200, {
         paths: {
           config_path: runtime.configPath,
@@ -704,12 +701,14 @@ function handleApi(
         strategy: {
           environment: effective.environment,
           policy_version: effective.policy_version,
-          policies: effective.policies,
-          file_rules: effective.file_rules,
+          model: strategyModel,
           file_rule_directories: listFileRuleDirectoryOptions(effective.file_rules.map((rule) => rule.directory)),
-          sensitivity: {
-            ...readSensitivePathStrategy(base, override),
-            effective_path_rules: effective.sensitivity.path_rules,
+          compiled: {
+            policy_count: effective.policies.length,
+            rule_count: countStrategyRules(strategyModel),
+            capability_count: strategyModel.tool_policy.capabilities.length,
+            file_rule_count: effective.file_rules.length,
+            sensitive_path_rule_count: effective.sensitivity.path_rules.length,
           }
         }
       });
@@ -741,14 +740,13 @@ function handleApi(
       try {
         const body = await readBody(req);
         const current = strategyStore.readOverride() ?? {};
-        const hasSensitivity = Object.prototype.hasOwnProperty.call(body, "sensitivity");
-        const nextSensitivity = hasSensitivity
-          ? normalizeSensitivePathStrategyOverride(body.sensitivity)
-          : current.sensitivity;
-        const hasFileRules = Object.prototype.hasOwnProperty.call(body, "file_rules");
-        const nextFileRules = hasFileRules
-          ? normalizeFileRules(body.file_rules)
-          : normalizeFileRules(current.file_rules);
+        const base = ConfigManager.fromFile(runtime.configPath).getConfig();
+        const currentStrategy = readStrategyModel(current.strategy ? applyRuntimeOverride(base, current) : base, current);
+        const nextStrategy = normalizeStrategyV2(body.strategy ?? body.strategy_v2 ?? currentStrategy);
+        if (!nextStrategy) {
+          throw new Error("strategy payload must be a StrategyV2 object");
+        }
+        compileStrategyV2(base, nextStrategy);
 
         const nextOverride: RuntimeOverride = {
           ...current,
@@ -757,15 +755,9 @@ function handleApi(
             typeof body.environment === "string" ? body.environment : current.environment,
           policy_version:
             typeof body.policy_version === "string" ? body.policy_version : current.policy_version,
-          policies:
-            Array.isArray(body.policies)
-              ? (body.policies as RuntimeOverride["policies"])
-              : current.policies,
-          ...(hasFileRules ? { file_rules: nextFileRules } : {}),
-          ...(hasSensitivity ? { sensitivity: nextSensitivity } : {})
+          strategy: nextStrategy,
         };
 
-        const base = ConfigManager.fromFile(runtime.configPath).getConfig();
         const validated = applyRuntimeOverride(base, nextOverride);
         strategyStore.writeOverride(nextOverride);
 
@@ -781,6 +773,8 @@ function handleApi(
             environment: validated.environment,
             policy_version: validated.policy_version,
             policy_count: validated.policies.length,
+            capability_count: nextStrategy.tool_policy.capabilities.length,
+            rule_count: countStrategyRules(nextStrategy),
             file_rule_count: validated.file_rules.length,
             sensitive_path_rule_count: validated.sensitivity.path_rules.length
           }

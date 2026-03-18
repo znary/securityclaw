@@ -8,6 +8,7 @@ import { LiveConfigResolver } from "../src/config/live_config.ts";
 import { StrategyStore } from "../src/config/strategy_store.ts";
 import { DecisionEngine } from "../src/engine/decision_engine.ts";
 import { RuleEngine } from "../src/engine/rule_engine.ts";
+import { buildStrategyV2FromConfig } from "../src/domain/services/strategy_model.ts";
 import type { DecisionContext, PolicyRule, SecurityClawConfig } from "../src/types.ts";
 
 function createDecisionContext(policyVersion: string): DecisionContext {
@@ -70,9 +71,14 @@ test("live config resolver applies sqlite strategy changes on next read", () => 
 
     const writer = new StrategyStore(dbPath);
     try {
+      const strategy = buildStrategyV2FromConfig({
+        ...initial.config,
+        policies: [blockRule],
+        file_rules: [],
+      });
       writer.writeOverride({
         policy_version: "2026-03-14-hot",
-        policies: [blockRule]
+        strategy
       });
     } finally {
       writer.close();
@@ -108,27 +114,27 @@ test("live config resolver applies sensitive path strategy overrides on next rea
 
     const writer = new StrategyStore(dbPath);
     try {
-      writer.writeOverride({
-        file_rules: [
-          {
-            id: "user-downloads-allow",
-            directory: "/Users/liuzhuangm4/Downloads",
-            decision: "allow",
-            reason_codes: ["USER_FILE_RULE_ALLOW"]
-          }
-        ],
-        sensitivity: {
-          disabled_builtin_ids: ["download-staging-downloads-directory"],
-          custom_path_rules: [
-            {
-              id: "custom-sensitive-staging",
-              asset_label: "download_staging",
-              match_type: "prefix",
-              pattern: "/srv/staging",
-              source: "custom"
-            }
-          ]
+      const strategy = buildStrategyV2FromConfig(initial.config);
+      strategy.exceptions.directory_overrides = [
+        {
+          id: "user-downloads-allow",
+          directory: "/Users/liuzhuangm4/Downloads",
+          decision: "allow",
+          reason_codes: ["USER_FILE_RULE_ALLOW"]
         }
+      ];
+      strategy.classifiers.disabled_builtin_ids = ["download-staging-downloads-directory"];
+      strategy.classifiers.custom_sensitive_paths = [
+        {
+          id: "custom-sensitive-staging",
+          asset_label: "download_staging",
+          match_type: "prefix",
+          pattern: "/srv/staging",
+          source: "custom"
+        }
+      ];
+      writer.writeOverride({
+        strategy
       });
     } finally {
       writer.close();

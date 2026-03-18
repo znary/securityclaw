@@ -5,6 +5,8 @@ import path from "node:path";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 
 import { StrategyStore } from "../src/config/strategy_store.ts";
+import { ConfigManager } from "../src/config/loader.ts";
+import { buildStrategyV2FromConfig } from "../src/domain/services/strategy_model.ts";
 
 test("strategy store persists override in sqlite", () => {
   const tempDir = mkdtempSync(path.join(os.tmpdir(), "securityclaw-strategy-store-"));
@@ -14,30 +16,30 @@ test("strategy store persists override in sqlite", () => {
   try {
     store = new StrategyStore(dbPath);
     assert.equal(store.readOverride(), undefined);
+    const strategy = buildStrategyV2FromConfig(ConfigManager.fromFile("./config/policy.default.yaml").getConfig());
+    strategy.exceptions.directory_overrides = [
+      {
+        id: "user-downloads-allow",
+        directory: "/Users/liuzhuangm4/Downloads",
+        decision: "allow",
+        reason_codes: ["USER_FILE_RULE_ALLOW"]
+      }
+    ];
+    strategy.classifiers.disabled_builtin_ids = ["download-staging-downloads-directory"];
+    strategy.classifiers.custom_sensitive_paths = [
+      {
+        id: "custom-sensitive-share",
+        asset_label: "credential",
+        match_type: "prefix",
+        pattern: "/srv/secrets",
+        source: "custom"
+      }
+    ];
 
     store.writeOverride({
       environment: "prod",
       policy_version: "2026-03-14",
-      file_rules: [
-        {
-          id: "user-downloads-allow",
-          directory: "/Users/liuzhuangm4/Downloads",
-          decision: "allow",
-          reason_codes: ["USER_FILE_RULE_ALLOW"]
-        }
-      ],
-      sensitivity: {
-        disabled_builtin_ids: ["download-staging-downloads-directory"],
-        custom_path_rules: [
-          {
-            id: "custom-sensitive-share",
-            asset_label: "credential",
-            match_type: "prefix",
-            pattern: "/srv/secrets",
-            source: "custom"
-          }
-        ]
-      },
+      strategy,
       account_policies: [
         {
           subject: "telegram:chat-42",
@@ -49,17 +51,17 @@ test("strategy store persists override in sqlite", () => {
     assert.equal(store.readOverride()?.environment, "prod");
     assert.equal(store.readOverride()?.policy_version, "2026-03-14");
     assert.equal(store.readOverride()?.account_policies?.[0]?.subject, "telegram:chat-42");
-    assert.equal(store.readOverride()?.file_rules?.[0]?.id, "user-downloads-allow");
-    assert.equal(store.readOverride()?.sensitivity?.disabled_builtin_ids?.[0], "download-staging-downloads-directory");
-    assert.equal(store.readOverride()?.sensitivity?.custom_path_rules?.[0]?.id, "custom-sensitive-share");
+    assert.equal(store.readOverride()?.strategy?.exceptions.directory_overrides?.[0]?.id, "user-downloads-allow");
+    assert.equal(store.readOverride()?.strategy?.classifiers.disabled_builtin_ids?.[0], "download-staging-downloads-directory");
+    assert.equal(store.readOverride()?.strategy?.classifiers.custom_sensitive_paths?.[0]?.id, "custom-sensitive-share");
 
     store.close();
     store = new StrategyStore(dbPath);
     assert.equal(store.readOverride()?.environment, "prod");
     assert.equal(store.readOverride()?.policy_version, "2026-03-14");
     assert.equal(store.readOverride()?.account_policies?.[0]?.mode, "default_allow");
-    assert.equal(store.readOverride()?.file_rules?.[0]?.decision, "allow");
-    assert.equal(store.readOverride()?.sensitivity?.custom_path_rules?.[0]?.pattern, "/srv/secrets");
+    assert.equal(store.readOverride()?.strategy?.exceptions.directory_overrides?.[0]?.decision, "allow");
+    assert.equal(store.readOverride()?.strategy?.classifiers.custom_sensitive_paths?.[0]?.pattern, "/srv/secrets");
   } finally {
     store?.close();
     rmSync(tempDir, { recursive: true, force: true });

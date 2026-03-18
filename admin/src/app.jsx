@@ -3658,8 +3658,8 @@ function App() {
                     <h3>{ui("先看能力默认策略，再看附加限制", "Capability baseline first, then additional restrictions")}</h3>
                     <p className="sensitive-path-intro">
                       {ui(
-                        "先定义每类能力的默认处理方式，再看哪些风险条件会升级成提醒、确认或拦截。需要管理员确认的规则会在执行时生成审批单，策略页不再展示工单、角色、trace 绑定这类内部审批字段。",
-                        "Define the default posture for each capability first, then inspect which risk conditions escalate to warn, challenge, or block. Rules that need admin approval will still generate approval requests at runtime, but this page no longer exposes internal fields such as ticket, role, or trace binding."
+                        "先定义每类能力的默认处理方式，再看哪些风险条件会升级成提醒、确认或拦截。需要管理员确认的规则会在执行时生成审批单。",
+                        "Define the default posture for each capability first, then inspect which risk conditions escalate to warn, challenge, or block. Rules that need admin approval will still generate approval requests at runtime."
                       )}
                     </p>
                   </div>

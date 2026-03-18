@@ -1210,6 +1210,41 @@ function userImpactSummary(policy) {
   return localizedBase;
 }
 
+function capabilityBaselineSummary(capability) {
+  const restrictionCount = toArray(capability?.rules).length;
+  const followup = restrictionCount > 0
+    ? ui(
+      `这只是这组能力的起始动作，后续 ${restrictionCount} 条附加限制仍可能把它升级成提醒、确认或拦截。`,
+      `This is only the baseline for the capability. The ${restrictionCount} additional restrictions can still escalate it to warn, approval, or block.`
+    )
+    : ui(
+      "当前没有额外附加限制，所以这组能力会直接按这个默认策略处理。",
+      "There are no additional restrictions right now, so this capability follows the baseline action directly."
+    );
+  return `${userImpactSummary({ decision: capability?.default_decision })} ${followup}`;
+}
+
+function skillDefaultActionSummary(kind, decision) {
+  const action = decisionLabel(decision);
+  const impact = userImpactSummary({ decision });
+  if (kind === "unscanned_S2") {
+    return ui(
+      `当 Skill 还没完成扫描、但调用已经达到 S2 时，会先按“${action}”兜底，避免敏感读写在未看清前被放宽。${impact}`,
+      `When a skill has not been scanned yet and the call already reaches S2, it falls back to "${action}" so sensitive reads/writes are not relaxed before inspection. ${impact}`
+    );
+  }
+  if (kind === "unscanned_S3") {
+    return ui(
+      `当 Skill 还没完成扫描、且调用达到 S3 时，会先按“${action}”处理，优先收紧执行和敏感外发。${impact}`,
+      `When a skill has not been scanned yet and the call reaches S3, it falls back to "${action}" to tighten execution and sensitive egress first. ${impact}`
+    );
+  }
+  return ui(
+    `当 Skill 内容变了但版本没变时，会先按“${action}”处理，避免未声明变更直接继承旧信任。${impact}`,
+    `When a skill changes without a version bump, it falls back to "${action}" so undeclared changes do not inherit previous trust by default. ${impact}`
+  );
+}
+
 function fallbackImpactExample(policy, index) {
   return {
     scene: ui(
@@ -3663,7 +3698,7 @@ function App() {
             role="tabpanel"
             aria-labelledby="tab-rules"
           >
-            <div className="panel-card">
+            <div className="panel-card strategy-panel">
               <div className="card-head">
                 <h2>{ui("策略", "Strategy")}</h2>
                 <div className="rule-meta">
@@ -3673,7 +3708,7 @@ function App() {
                 </div>
               </div>
 
-              <section className="rule-group" aria-label={ui("访问基线", "Access baseline")}>
+              <section className="rule-group rule-group-shell" aria-label={ui("访问基线", "Access baseline")}>
                 <div className="card-head">
                   <div>
                     <span className="eyebrow">{ui("Access", "Access")}</span>
@@ -3690,84 +3725,96 @@ function App() {
                 {capabilityPolicies.length === 0 ? (
                   <div className="chart-empty">{ui("暂无能力配置。", "No capability policies configured.")}</div>
                 ) : (
-                  capabilityPolicies.map((capability) => (
-                    <section key={capability.capability_id} className="rule-group">
-                      <div className="rule-head">
-                        <div>
-                          <div className="rule-title">{capabilityLabel(capability.capability_id)}</div>
-                          <div className="rule-desc">
-                            {capabilityDescription(capability.capability_id)}
+                  <div className="rule-capability-list">
+                    {capabilityPolicies.map((capability) => (
+                      <section key={capability.capability_id} className="rule-group rule-capability-group">
+                        <div className="rule-head rule-capability-head">
+                          <div>
+                            <div className="rule-title">{capabilityLabel(capability.capability_id)}</div>
+                            <div className="rule-desc">
+                              {capabilityDescription(capability.capability_id)}
+                            </div>
                           </div>
-                          <div className="rule-desc">
-                            {ui(
-                              `默认策略是“${decisionLabel(capability.default_decision)}”，当前叠加 ${toArray(capability.rules).length} 条附加限制。`,
-                              `Default posture is "${decisionLabel(capability.default_decision)}" with ${toArray(capability.rules).length} additional restrictions layered on top.`
-                            )}
+                          <div className="rule-head-side">
+                            <DecisionTag decision={capability.default_decision} />
+                            <span className="tag meta-tag">{ui("Baseline", "Baseline")}</span>
                           </div>
                         </div>
-                        <div className="rule-head-side">
-                          <DecisionTag decision={capability.default_decision} />
-                          <span className="tag meta-tag">{ui("Baseline", "Baseline")}</span>
-                        </div>
-                      </div>
 
-                      <div className="rule-actions" role="group" aria-label={ui(`${capabilityLabel(capability.capability_id)} 默认策略`, `${capabilityLabel(capability.capability_id)} baseline policy`)}>
-                        {DECISION_OPTIONS.map((decision) => (
-                          <button
-                            key={`${capability.capability_id}-${decision}`}
-                            className={`rule-action-button ${decision} ${capability.default_decision === decision ? "active" : ""}`}
-                            type="button"
-                            aria-pressed={capability.default_decision === decision}
-                            onClick={() =>
-                              setStrategyModel((current) =>
-                                updateStrategyCapabilityDefaultDecision(current, capability.capability_id, decision)
-                              )
-                            }
-                          >
-                            {decisionLabel(decision)}
-                          </button>
-                        ))}
-                      </div>
-
-                      {toArray(capability.rules).length === 0 ? (
-                        <div className="chart-empty">{ui("当前能力下没有额外附加限制。", "No additional restrictions for this capability.")}</div>
-                      ) : (
-                        <div className="rules">
-                          {toArray(capability.rules).map((rule, index) => (
-                            <article key={`${capability.capability_id}:${rule.rule_id || index}`} className="rule">
-                              <div className="rule-head">
-                                <div className="rule-title">{policyTitle({ ...rule, match: rule.context }, index)}</div>
-                                <div className="rule-head-side">
-                                  <DecisionTag decision={rule.decision} />
-                                  <div className="rule-tags" aria-label={ui("规则标签", "Rule tags")}>
-                                    <span className="tag meta-tag">{controlDomainLabel(rule.control_domain || rule.group)}</span>
-                                    {rule.severity ? <span className={`tag meta-tag severity-${rule.severity}`}>{severityLabel(rule.severity)}</span> : null}
-                                    {rule.owner ? <span className="tag meta-tag">{rule.owner}</span> : null}
-                                  </div>
-                                </div>
-                              </div>
-                              <div className="rule-actions" role="group" aria-label={ui(`规则 ${rule.rule_id || index + 1} 的策略动作`, `Policy actions for rule ${rule.rule_id || index + 1}`)}>
-                                {DECISION_OPTIONS.map((decision) => (
-                                  <button
-                                    key={`${rule.rule_id}-${decision}`}
-                                    className={`rule-action-button ${decision} ${rule.decision === decision ? "active" : ""}`}
-                                    type="button"
-                                    aria-pressed={rule.decision === decision}
-                                    onClick={() => onDecisionChange(rule.rule_id, decision)}
-                                  >
-                                    {decisionLabel(decision)}
-                                  </button>
-                                ))}
-                              </div>
-                              <div className="rule-desc">{ruleDescription({ ...rule, match: rule.context })}</div>
-                            </article>
+                        <div className="rule-actions" role="group" aria-label={ui(`${capabilityLabel(capability.capability_id)} 默认策略`, `${capabilityLabel(capability.capability_id)} baseline policy`)}>
+                          {DECISION_OPTIONS.map((decision) => (
+                            <button
+                              key={`${capability.capability_id}-${decision}`}
+                              className={`rule-action-button ${decision} ${capability.default_decision === decision ? "active" : ""}`}
+                              type="button"
+                              aria-pressed={capability.default_decision === decision}
+                              onClick={() =>
+                                setStrategyModel((current) =>
+                                  updateStrategyCapabilityDefaultDecision(current, capability.capability_id, decision)
+                                )
+                              }
+                            >
+                              {decisionLabel(decision)}
+                            </button>
                           ))}
                         </div>
-                      )}
 
-                      {capability.capability_id === "filesystem" ? renderFilesystemOverridesSection(true) : null}
-                    </section>
-                  ))
+                        <div className={`rule-helper ${capability.default_decision}`}>
+                          <span className="rule-helper-label">
+                            {ui("默认策略说明", "Baseline effect")} · {decisionLabel(capability.default_decision)}
+                          </span>
+                          <p>{capabilityBaselineSummary(capability)}</p>
+                        </div>
+
+                        {toArray(capability.rules).length === 0 ? (
+                          <div className="chart-empty">{ui("当前能力下没有额外附加限制。", "No additional restrictions for this capability.")}</div>
+                        ) : (
+                          <div className="rules">
+                            {toArray(capability.rules).map((rule, index) => {
+                              const policy = { ...rule, match: rule.context };
+                              return (
+                                <article key={`${capability.capability_id}:${rule.rule_id || index}`} className="rule">
+                                  <div className="rule-head">
+                                    <div className="rule-title">{policyTitle(policy, index)}</div>
+                                    <div className="rule-head-side">
+                                      <DecisionTag decision={rule.decision} />
+                                      <div className="rule-tags" aria-label={ui("规则标签", "Rule tags")}>
+                                        <span className="tag meta-tag">{controlDomainLabel(rule.control_domain || rule.group)}</span>
+                                        {rule.severity ? <span className={`tag meta-tag severity-${rule.severity}`}>{severityLabel(rule.severity)}</span> : null}
+                                        {rule.owner ? <span className="tag meta-tag">{rule.owner}</span> : null}
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <div className="rule-actions" role="group" aria-label={ui(`规则 ${rule.rule_id || index + 1} 的策略动作`, `Policy actions for rule ${rule.rule_id || index + 1}`)}>
+                                    {DECISION_OPTIONS.map((decision) => (
+                                      <button
+                                        key={`${rule.rule_id}-${decision}`}
+                                        className={`rule-action-button ${decision} ${rule.decision === decision ? "active" : ""}`}
+                                        type="button"
+                                        aria-pressed={rule.decision === decision}
+                                        onClick={() => onDecisionChange(rule.rule_id, decision)}
+                                      >
+                                        {decisionLabel(decision)}
+                                      </button>
+                                    ))}
+                                  </div>
+                                  <div className="rule-desc">{ruleDescription(policy)}</div>
+                                  <div className={`rule-helper ${rule.decision}`}>
+                                    <span className="rule-helper-label">
+                                      {ui("当前处理方式", "Current handling")} · {decisionLabel(rule.decision)}
+                                    </span>
+                                    <p>{userImpactSummary(rule)}</p>
+                                  </div>
+                                </article>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {capability.capability_id === "filesystem" ? renderFilesystemOverridesSection(true) : null}
+                      </section>
+                    ))}
+                  </div>
                 )}
               </section>
 
@@ -4134,120 +4181,174 @@ function App() {
                 </div>
 
                 {skillPolicy ? (
-                  <>
-                    <div className="skill-policy-grid">
-                      <label className="skill-policy-field">
-                        <span>{ui("Medium 阈值", "Medium Threshold")}</span>
-                        <input
-                          type="number"
-                          min="0"
-                          max="100"
-                          value={skillPolicy.thresholds.medium}
-                          onChange={(event) => updateSkillThreshold("medium", event.target.value)}
-                        />
-                      </label>
-                      <label className="skill-policy-field">
-                        <span>{ui("High 阈值", "High Threshold")}</span>
-                        <input
-                          type="number"
-                          min="0"
-                          max="100"
-                          value={skillPolicy.thresholds.high}
-                          onChange={(event) => updateSkillThreshold("high", event.target.value)}
-                        />
-                      </label>
-                      <label className="skill-policy-field">
-                        <span>{ui("Critical 阈值", "Critical Threshold")}</span>
-                        <input
-                          type="number"
-                          min="0"
-                          max="100"
-                          value={skillPolicy.thresholds.critical}
-                          onChange={(event) => updateSkillThreshold("critical", event.target.value)}
-                        />
-                      </label>
-                      <label className="skill-policy-field">
-                        <span>{ui("临时受信时长（小时）", "Trust Override Duration (h)")}</span>
-                        <input
-                          type="number"
-                          min="1"
-                          max="168"
-                          value={skillPolicy.defaults.trust_override_hours}
-                          onChange={(event) => updateSkillDefaultAction("trust_override_hours", event.target.value)}
-                        />
-                      </label>
-                    </div>
+                  <div className="skill-policy-sections">
+                    <section className="skill-policy-section">
+                      <div className="skill-policy-section-head">
+                        <h4>{ui("分数阈值", "Score Thresholds")}</h4>
+                        <p>
+                          {ui(
+                            "用分数把 Skill 风险归到 low / medium / high / critical，便于矩阵规则继续决定动作。",
+                            "Use score cutoffs to place skills into low / medium / high / critical before the policy matrix decides the final action."
+                          )}
+                        </p>
+                      </div>
 
-                    <div className="skill-policy-table-wrap">
-                      <table className="skill-policy-table">
-                        <thead>
-                          <tr>
-                            <th>{ui("风险 \\ 严重度", "Risk \\ Severity")}</th>
-                            {SKILL_SEVERITY_LEVELS.map((severity) => (
-                              <th key={severity}>{skillSeverityLabel(severity)}</th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {SKILL_POLICY_TIERS.map((tier) => (
-                            <tr key={tier}>
-                              <th scope="row">
-                                {tier === "unknown" ? ui("未扫描 / 过期", "Unscanned / Stale") : skillRiskLabel(tier)}
-                              </th>
+                      <div className="skill-policy-grid">
+                        <label className="skill-policy-field">
+                          <span>{ui("Medium 阈值", "Medium Threshold")}</span>
+                          <input
+                            type="number"
+                            min="0"
+                            max="100"
+                            value={skillPolicy.thresholds.medium}
+                            onChange={(event) => updateSkillThreshold("medium", event.target.value)}
+                          />
+                        </label>
+                        <label className="skill-policy-field">
+                          <span>{ui("High 阈值", "High Threshold")}</span>
+                          <input
+                            type="number"
+                            min="0"
+                            max="100"
+                            value={skillPolicy.thresholds.high}
+                            onChange={(event) => updateSkillThreshold("high", event.target.value)}
+                          />
+                        </label>
+                        <label className="skill-policy-field">
+                          <span>{ui("Critical 阈值", "Critical Threshold")}</span>
+                          <input
+                            type="number"
+                            min="0"
+                            max="100"
+                            value={skillPolicy.thresholds.critical}
+                            onChange={(event) => updateSkillThreshold("critical", event.target.value)}
+                          />
+                        </label>
+                        <label className="skill-policy-field">
+                          <span>{ui("临时受信时长（小时）", "Trust Override Duration (h)")}</span>
+                          <input
+                            type="number"
+                            min="1"
+                            max="168"
+                            value={skillPolicy.defaults.trust_override_hours}
+                            onChange={(event) => updateSkillDefaultAction("trust_override_hours", event.target.value)}
+                          />
+                        </label>
+                      </div>
+                    </section>
+
+                    <section className="skill-policy-section">
+                      <div className="skill-policy-section-head">
+                        <h4>{ui("风险 × 严重度矩阵", "Risk-by-Severity Matrix")}</h4>
+                        <p>
+                          {ui(
+                            "先按综合风险分层，再结合调用严重度决定最终动作。矩阵越往右下越应该更严格。",
+                            "The final action comes from the combination of composite risk tier and call severity. Cells toward the bottom-right should usually be stricter."
+                          )}
+                        </p>
+                      </div>
+
+                      <div className="skill-policy-table-wrap">
+                        <table className="skill-policy-table">
+                          <thead>
+                            <tr>
+                              <th>{ui("风险 \\ 严重度", "Risk \\ Severity")}</th>
                               {SKILL_SEVERITY_LEVELS.map((severity) => (
-                                <td key={`${tier}-${severity}`}>
-                                  <select
-                                    value={skillPolicy.matrix[tier][severity]}
-                                    onChange={(event) => updateSkillMatrixDecision(tier, severity, event.target.value)}
-                                  >
-                                    {DECISION_OPTIONS.map((decision) => (
-                                      <option key={decision} value={decision}>{decisionLabel(decision)}</option>
-                                    ))}
-                                  </select>
-                                </td>
+                                <th key={severity}>{skillSeverityLabel(severity)}</th>
                               ))}
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
+                          </thead>
+                          <tbody>
+                            {SKILL_POLICY_TIERS.map((tier) => (
+                              <tr key={tier}>
+                                <th scope="row">
+                                  {tier === "unknown" ? ui("未扫描 / 过期", "Unscanned / Stale") : skillRiskLabel(tier)}
+                                </th>
+                                {SKILL_SEVERITY_LEVELS.map((severity) => (
+                                  <td key={`${tier}-${severity}`}>
+                                    <select
+                                      value={skillPolicy.matrix[tier][severity]}
+                                      onChange={(event) => updateSkillMatrixDecision(tier, severity, event.target.value)}
+                                    >
+                                      {DECISION_OPTIONS.map((decision) => (
+                                        <option key={decision} value={decision}>{decisionLabel(decision)}</option>
+                                      ))}
+                                    </select>
+                                  </td>
+                                ))}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </section>
 
-                    <div className="skill-policy-grid skill-policy-grid-secondary">
-                      <label className="skill-policy-field">
-                        <span>{ui("未扫描 S2 默认动作", "Unscanned S2 Default")}</span>
-                        <select
-                          value={skillPolicy.defaults.unscanned.S2}
-                          onChange={(event) => updateSkillDefaultAction("unscanned_S2", event.target.value)}
-                        >
-                          {DECISION_OPTIONS.map((decision) => (
-                            <option key={decision} value={decision}>{decisionLabel(decision)}</option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="skill-policy-field">
-                        <span>{ui("未扫描 S3 默认动作", "Unscanned S3 Default")}</span>
-                        <select
-                          value={skillPolicy.defaults.unscanned.S3}
-                          onChange={(event) => updateSkillDefaultAction("unscanned_S3", event.target.value)}
-                        >
-                          {DECISION_OPTIONS.map((decision) => (
-                            <option key={decision} value={decision}>{decisionLabel(decision)}</option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="skill-policy-field">
-                        <span>{ui("内容变了但版本没变时的默认动作", "Default Action for Undeclared Change")}</span>
-                        <select
-                          value={skillPolicy.defaults.drifted_action}
-                          onChange={(event) => updateSkillDefaultAction("drifted_action", event.target.value)}
-                        >
-                          {DECISION_OPTIONS.map((decision) => (
-                            <option key={decision} value={decision}>{decisionLabel(decision)}</option>
-                          ))}
-                        </select>
-                      </label>
-                    </div>
-                  </>
+                    <section className="skill-policy-section">
+                      <div className="skill-policy-section-head">
+                        <h4>{ui("兜底动作", "Fallback Actions")}</h4>
+                        <p>
+                          {ui(
+                            "这些规则处理两类容易被忽略的情况：还没扫描完成，以及内容变了但版本没跟着变。",
+                            "These defaults cover two easy-to-miss cases: a skill has not been scanned yet, or its content changed without a version update."
+                          )}
+                        </p>
+                      </div>
+
+                      <div className="skill-policy-grid skill-policy-grid-secondary">
+                        <label className="skill-policy-field">
+                          <span>{ui("未扫描 S2 默认动作", "Unscanned S2 Default")}</span>
+                          <select
+                            value={skillPolicy.defaults.unscanned.S2}
+                            onChange={(event) => updateSkillDefaultAction("unscanned_S2", event.target.value)}
+                          >
+                            {DECISION_OPTIONS.map((decision) => (
+                              <option key={decision} value={decision}>{decisionLabel(decision)}</option>
+                            ))}
+                          </select>
+                          <div className={`rule-helper skill-policy-field-note ${skillPolicy.defaults.unscanned.S2}`}>
+                            <span className="rule-helper-label">
+                              {ui("当前处理方式", "Current handling")} · {decisionLabel(skillPolicy.defaults.unscanned.S2)}
+                            </span>
+                            <p>{skillDefaultActionSummary("unscanned_S2", skillPolicy.defaults.unscanned.S2)}</p>
+                          </div>
+                        </label>
+                        <label className="skill-policy-field">
+                          <span>{ui("未扫描 S3 默认动作", "Unscanned S3 Default")}</span>
+                          <select
+                            value={skillPolicy.defaults.unscanned.S3}
+                            onChange={(event) => updateSkillDefaultAction("unscanned_S3", event.target.value)}
+                          >
+                            {DECISION_OPTIONS.map((decision) => (
+                              <option key={decision} value={decision}>{decisionLabel(decision)}</option>
+                            ))}
+                          </select>
+                          <div className={`rule-helper skill-policy-field-note ${skillPolicy.defaults.unscanned.S3}`}>
+                            <span className="rule-helper-label">
+                              {ui("当前处理方式", "Current handling")} · {decisionLabel(skillPolicy.defaults.unscanned.S3)}
+                            </span>
+                            <p>{skillDefaultActionSummary("unscanned_S3", skillPolicy.defaults.unscanned.S3)}</p>
+                          </div>
+                        </label>
+                        <label className="skill-policy-field">
+                          <span>{ui("内容变了但版本没变时的默认动作", "Default Action for Undeclared Change")}</span>
+                          <select
+                            value={skillPolicy.defaults.drifted_action}
+                            onChange={(event) => updateSkillDefaultAction("drifted_action", event.target.value)}
+                          >
+                            {DECISION_OPTIONS.map((decision) => (
+                              <option key={decision} value={decision}>{decisionLabel(decision)}</option>
+                            ))}
+                          </select>
+                          <div className={`rule-helper skill-policy-field-note ${skillPolicy.defaults.drifted_action}`}>
+                            <span className="rule-helper-label">
+                              {ui("当前处理方式", "Current handling")} · {decisionLabel(skillPolicy.defaults.drifted_action)}
+                            </span>
+                            <p>{skillDefaultActionSummary("drifted_action", skillPolicy.defaults.drifted_action)}</p>
+                          </div>
+                        </label>
+                      </div>
+                    </section>
+                  </div>
                 ) : (
                   <div className="chart-empty">{ui("策略加载中...", "Loading policy...")}</div>
                 )}

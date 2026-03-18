@@ -1656,9 +1656,58 @@ tbody tr:hover {
   gap: 18px;
 }
 
+.strategy-panel,
+.skill-policy-panel {
+  display: grid;
+  gap: 24px;
+}
+
+.strategy-panel > .card-head,
+.skill-policy-panel > .card-head {
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+
 .rule-group {
   display: grid;
   gap: 10px;
+}
+
+.rule-group-shell {
+  gap: 20px;
+}
+
+.rule-capability-list {
+  display: grid;
+  gap: 24px;
+}
+
+.rule-capability-group {
+  position: relative;
+  gap: 16px;
+  padding-top: 24px;
+}
+
+.rule-capability-group::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent 0%, var(--line) 12%, var(--line) 88%, transparent 100%);
+}
+
+.rule-capability-group:first-child {
+  padding-top: 0;
+}
+
+.rule-capability-group:first-child::before {
+  content: none;
+}
+
+.rule-capability-head {
+  margin-bottom: 2px;
 }
 
 .rule-group-title {
@@ -1899,11 +1948,40 @@ tbody tr:hover {
 .rule-helper {
   padding: 10px 12px;
   border-radius: var(--radius-sm);
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-soft);
   background: var(--bg-subtle);
   color: var(--muted);
   font-size: 13px;
   line-height: 1.6;
+  display: grid;
+  gap: 6px;
+}
+
+.rule-helper p {
+  margin: 0;
+}
+
+.rule-helper-label {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.rule-helper.allow {
+  border-color: var(--good-border-soft);
+  background: var(--good-soft);
+}
+
+.rule-helper.warn,
+.rule-helper.challenge {
+  border-color: var(--warn-border-soft);
+  background: var(--warn-soft);
+}
+
+.rule-helper.block {
+  border-color: var(--bad-border-soft);
+  background: var(--bad-soft);
 }
 
 .pagination {
@@ -2436,13 +2514,58 @@ tbody tr:hover {
   gap: 12px;
 }
 
+.skill-policy-sections {
+  display: grid;
+  gap: 24px;
+}
+
+.skill-policy-section {
+  position: relative;
+  display: grid;
+  gap: 14px;
+  padding-top: 24px;
+}
+
+.skill-policy-section::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent 0%, var(--line) 12%, var(--line) 88%, transparent 100%);
+}
+
+.skill-policy-section:first-child {
+  padding-top: 0;
+}
+
+.skill-policy-section:first-child::before {
+  content: none;
+}
+
+.skill-policy-section-head {
+  display: grid;
+  gap: 6px;
+  max-width: 820px;
+}
+
+.skill-policy-section-head h4 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.skill-policy-section-head p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.65;
+}
+
 .skill-policy-grid-secondary {
-  margin-top: 16px;
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .skill-policy-table-wrap {
-  margin-top: 16px;
   overflow-x: auto;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
@@ -2495,6 +2618,10 @@ tbody tr:hover {
   background: var(--bg-elevated);
   color: var(--ink);
   padding: 0 12px;
+}
+
+.skill-policy-field-note {
+  margin-top: 4px;
 }
 
 @keyframes rise-in {

@@ -1897,7 +1897,8 @@ tbody tr:hover {
   gap: 14px;
 }
 
-.hardening-drawer-backdrop {
+.hardening-drawer-backdrop,
+.skill-detail-backdrop {
   position: fixed;
   inset: 0;
   z-index: 55;
@@ -2799,13 +2800,12 @@ tbody tr:hover {
 
 .skills-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1.1fr) minmax(340px, 0.9fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 18px;
   align-items: start;
 }
 
 .skill-list-panel,
-.skill-detail-panel,
 .skill-policy-panel {
   background: linear-gradient(180deg, var(--surface-chart-top) 0%, var(--surface-chart-bottom) 100%);
   border: 1px solid var(--surface-chart-border);
@@ -2813,7 +2813,6 @@ tbody tr:hover {
 }
 
 .skill-list-panel,
-.skill-detail-panel,
 .skill-policy-panel,
 .skills-metrics .stat {
   border-radius: var(--radius-lg);
@@ -2957,10 +2956,12 @@ tbody tr:hover {
 }
 
 .skill-detail-panel {
-  position: sticky;
-  top: 18px;
   display: grid;
   gap: 16px;
+}
+
+.skill-detail-modal {
+  width: min(1120px, 100%);
 }
 
 .skill-detail-head {
@@ -3394,11 +3395,13 @@ tbody tr:hover {
   }
 
   .hardening-drawer-backdrop,
-  .hardening-info-backdrop {
+  .hardening-info-backdrop,
+  .skill-detail-backdrop {
     padding: 12px;
   }
 
-  .hardening-drawer {
+  .hardening-drawer,
+  .skill-detail-modal {
     width: 100%;
     max-height: calc(100vh - 24px);
   }

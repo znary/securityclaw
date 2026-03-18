@@ -148,8 +148,8 @@ function resolveReadOnlyCause(status: ClawGuardStatusPayload | null): ReadOnlyCa
     return {
       title: ui("当前没有连上可写的 gateway RPC", "A writable gateway RPC connection is unavailable"),
       detail: ui(
-        "这次系统加固页读到的是本地配置快照，不是 gateway 返回的可写配置，所以现在只能查看，不能直接写回。",
-        "This hardening scan is using a local config snapshot instead of a writable config returned by the gateway, so it can only inspect and cannot write back.",
+        "这次系统页读到的是本地配置快照，不是 gateway 返回的可写配置，所以现在只能查看，不能直接写回。",
+        "This system scan is using a local config snapshot instead of a writable config returned by the gateway, so it can only inspect and cannot write back.",
       ),
       raw,
     };
@@ -229,7 +229,7 @@ export function HardeningPanel({
     || repairChoices[0]
     || null;
   const drawerTitle = pickText(
-    ui("系统加固项", "Hardening Finding"),
+    ui("系统项", "System Finding"),
     selectedFinding?.title,
     preview?.title,
   );
@@ -241,6 +241,9 @@ export function HardeningPanel({
   const repairPlanTitle = pickText("", preview?.title, selectedChoice?.label);
   const repairPlanSummary = pickText("", preview?.summary, selectedChoice?.description);
   const showRepairPlan = isMeaningfulText(repairPlanTitle) && repairPlanTitle !== drawerTitle;
+  const visibleRepairChoices = showRepairPlan && selectedChoice
+    ? repairChoices.filter((choice) => choice.id !== selectedChoice.id)
+    : repairChoices;
   const readOnlyCause = resolveReadOnlyCause(status);
   const readOnlyStateTitle =
     status?.config_source === "local-file"
@@ -260,7 +263,7 @@ export function HardeningPanel({
     previewLoading
       ? ui("正在生成这项修复的变更预览...", "Generating the patch preview for this repair...")
       : status?.read_only
-        ? ui("当前不能自动写回，但可以按上面的步骤手动修改这些配置项。", "Automatic writeback is unavailable right now. Use the steps above to edit the config manually.")
+        ? ui("当前不能自动写回，但可以按当前风险详情手动修改这些配置项。", "Automatic writeback is unavailable right now. Use the current finding details to edit the config manually.")
         : ui("当前没有可预览的配置改动。", "No config patch is available for preview.")
   );
   const applyDisabled = previewLoading || applyLoading || status?.read_only === true || preview?.can_apply === false;
@@ -301,11 +304,11 @@ export function HardeningPanel({
         <div className="panel-card hardening-panel dashboard-panel">
           <div className="card-head">
             <div>
-              <h2>{ui("系统加固", "Claw Guard")}</h2>
+              <h2>{ui("系统", "System")}</h2>
               <p className="skills-intro">
                 {ui(
-                  "这里专门检查 OpenClaw 基础配置里的高价值风险项，并给出单项修复入口。重点不是展示全部策略，而是直接指出哪里不安全、为什么、以及怎么改。",
-                  "This page checks high-value risks in the base OpenClaw config and provides a per-item repair entry. The goal is not to mirror every strategy, but to point to what is unsafe, why, and how to fix it."
+                  "这里专门检查 OpenClaw 基础配置里的高价值风险项，并给出单项修复入口。",
+                  "This page checks high-value risks in the base OpenClaw config and provides a per-item repair entry."
                 )}
               </p>
             </div>
@@ -315,8 +318,8 @@ export function HardeningPanel({
                   className="hardening-read-only-pill"
                   type="button"
                   onClick={() => setReadOnlyInfoOpen(true)}
-                  aria-label={ui("查看只读模式原因和处理方式", "View why this page is read-only and what to do next")}
-                  title={ui("查看只读模式原因和处理方式", "View why this page is read-only and what to do next")}
+                  aria-label={ui("查看只读模式原因", "View why this page is read-only")}
+                  title={ui("查看只读模式原因", "View why this page is read-only")}
                 >
                   <span className="hardening-read-only-pill-label">{ui("只读", "Read Only")}</span>
                   <span className="hardening-read-only-pill-icon" aria-hidden="true">
@@ -353,8 +356,8 @@ export function HardeningPanel({
               <LoadingSpinner />
               <span>
                 {ui(
-                  "正在重新读取系统加固状态，列表会在扫描完成后更新。",
-                  "Refreshing hardening status. The list updates as soon as the scan finishes.",
+                  "正在重新读取系统状态，列表会在扫描完成后更新。",
+                  "Refreshing system status. The list updates as soon as the scan finishes.",
                 )}
               </span>
             </div>
@@ -364,12 +367,12 @@ export function HardeningPanel({
             <div className="hardening-loading-card" role="status" aria-live="polite">
               <div className="hardening-loading-head">
                 <LoadingSpinner />
-                <strong>{ui("正在读取系统加固状态", "Loading hardening status")}</strong>
+                <strong>{ui("正在读取系统状态", "Loading system status")}</strong>
               </div>
               <p>
                 {ui(
-                  "系统加固扫描需要读取当前 OpenClaw 配置，请稍等片刻。",
-                  "The hardening scan needs to read the current OpenClaw config. Please wait a moment.",
+                  "系统扫描需要读取当前 OpenClaw 配置，请稍等片刻。",
+                  "The system scan needs to read the current OpenClaw config. Please wait a moment.",
                 )}
               </p>
               <div className="hardening-loading-skeleton" aria-hidden="true">
@@ -433,7 +436,7 @@ export function HardeningPanel({
             </div>
           )}
 
-          <details className="hardening-passed-panel">
+          <details className="hardening-passed-panel" open>
             <summary>
               {ui("已通过项", "Passed Checks")} ({passed.length})
             </summary>
@@ -513,9 +516,9 @@ export function HardeningPanel({
               ) : null}
 
               <div className="hardening-modal-body">
-                {repairChoices.length > 0 ? (
+                {visibleRepairChoices.length > 0 ? (
                   <div className="hardening-choice-list">
-                    {repairChoices.map((choice) => (
+                    {visibleRepairChoices.map((choice) => (
                       <button
                         key={choice.id}
                         className={`hardening-choice ${selectedChoiceId === choice.id ? "active" : ""}`}
@@ -699,43 +702,6 @@ export function HardeningPanel({
                 <pre className="hardening-patch-preview">{readOnlyCause.raw}</pre>
               </div>
             ) : null}
-
-            <div className="hardening-read-only-steps">
-              <div className="hardening-read-only-steps-head">
-                <strong>{ui("接下来这样处理", "What to do next")}</strong>
-                <p>
-                  {ui(
-                    "按下面这三个动作处理就够了，不需要先猜是权限还是别的原因。",
-                    "Follow these three steps. You do not need to guess whether the cause is permissions or something else first.",
-                  )}
-                </p>
-              </div>
-              <div className="hardening-read-only-step-list">
-                <div className="hardening-read-only-step">
-                  <strong>{ui("先看当前生效配置", "Check the active config first")}</strong>
-                  <p>{ui("确认 OpenClaw 现在实际读取的是哪份配置。", "Confirm which config OpenClaw is actually using right now.")}</p>
-                  {status?.config_path ? <div className="hardening-status-path">{status.config_path}</div> : null}
-                </div>
-                <div className="hardening-read-only-step">
-                  <strong>{ui("按风险详情手动修改", "Apply the fix manually")}</strong>
-                  <p>
-                    {ui(
-                      "打开风险详情后，按其中给出的配置路径、推荐值和变更预览手动修改。",
-                      "Open a finding and use its config paths, recommended values, and patch preview to edit the file manually.",
-                    )}
-                  </p>
-                </div>
-                <div className="hardening-read-only-step">
-                  <strong>{ui("恢复可写或完成重启后再扫描", "Rescan after write access or restart is restored")}</strong>
-                  <p>
-                    {ui(
-                      "如果是 gateway RPC 不可用，先恢复 gateway；保存配置后按页面提示重启，再重新扫描。",
-                      "If gateway RPC is unavailable, restore the gateway first. After saving the config, restart when the page says it is required, then rescan.",
-                    )}
-                  </p>
-                </div>
-              </div>
-            </div>
 
             <div className="confirm-dialog-actions">
               <button className="primary small" type="button" onClick={() => setReadOnlyInfoOpen(false)}>

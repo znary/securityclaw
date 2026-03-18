@@ -61,6 +61,7 @@ type SkillsPanelProps = {
   skillConfirmAction: SkillConfirmAction | null;
   onRefresh: () => void | Promise<void>;
   onSelectSkill: (skillId: string) => void;
+  onCloseSkillDetail: () => void;
   onSetSkillRiskFilter: (value: SkillRiskFilterValue) => void;
   onSetSkillStateFilter: (value: SkillStateFilterValue) => void;
   onSetSkillSourceFilter: (value: SkillSourceFilterValue) => void;
@@ -117,6 +118,7 @@ export function SkillsPanel({
   skillConfirmAction,
   onRefresh,
   onSelectSkill,
+  onCloseSkillDetail,
   onSetSkillRiskFilter,
   onSetSkillStateFilter,
   onSetSkillSourceFilter,
@@ -153,7 +155,7 @@ export function SkillsPanel({
       <div className="panel-card skills-panel dashboard-panel">
         <div className="card-head">
           <div>
-            <h2>{ui("Skill", "Skill")}</h2>
+            <h2>{ui("Skills", "Skills")}</h2>
             <p className="skills-intro">
               {ui(
                 "后台会自动发现本地已安装 skills，给出风险等级、内容是否发生未声明变更，以及人工处置入口。低风险默认无感，高风险行为集中在详情和策略区处理。",
@@ -250,6 +252,7 @@ export function SkillsPanel({
                     key={skill.skill_id}
                     className={`skill-row ${selectedSkillId === skill.skill_id ? "active" : ""}`}
                     type="button"
+                    aria-haspopup="dialog"
                     onClick={() => onSelectSkill(skill.skill_id)}
                   >
                     <div className="skill-row-main">
@@ -289,11 +292,18 @@ export function SkillsPanel({
             )}
           </div>
 
-          <aside className="panel-card skill-detail-panel">
-            {!selectedSkill ? (
-              <div className="chart-empty">{ui("选择一个 Skill 查看详情。", "Select a skill to inspect details.")}</div>
-            ) : (
-              <>
+        </div>
+
+        {selectedSkill ? (
+          <div
+            className="skill-detail-backdrop"
+            role="dialog"
+            aria-modal="true"
+            aria-label={ui("Skills 详情", "Skills details")}
+            onClick={onCloseSkillDetail}
+          >
+            <div className="hardening-drawer skill-detail-modal" onClick={(event) => event.stopPropagation()} aria-busy={skillDetailLoading || Boolean(skillActionLoading)}>
+              <div className="hardening-modal-sticky">
                 <div className="skill-detail-head">
                   <div>
                     <span className="eyebrow">{ui("实时画像", "Live Profile")}</span>
@@ -329,113 +339,126 @@ export function SkillsPanel({
                     >
                       {selectedSkill.trust_override ? ui("撤销受信", "Remove Override") : ui("设为受信", "Trust Override")}
                     </button>
+                    <button className="ghost small" type="button" onClick={onCloseSkillDetail}>
+                      {ui("关闭", "Close")}
+                    </button>
                   </div>
                 </div>
+              </div>
 
-                <div className="skill-score-card">
-                  <div className="skill-score-top">
-                    <div>
-                      <div className="skill-score-label">{ui("综合风险", "Composite Risk")}</div>
-                      <div className="skill-score-value">{selectedSkill.risk_score}</div>
+              <div className="hardening-drawer-content">
+                {skillDetailLoading ? (
+                  <div className="hardening-inline-note" role="status" aria-live="polite">
+                    {ui("详情加载中，下面先显示当前已拿到的结果。", "Loading details. Showing the data already available.")}
+                  </div>
+                ) : null}
+
+                <div className="skill-detail-panel">
+                  <div className="skill-score-card">
+                    <div className="skill-score-top">
+                      <div>
+                        <div className="skill-score-label">{ui("综合风险", "Composite Risk")}</div>
+                        <div className="skill-score-value">{selectedSkill.risk_score}</div>
+                      </div>
+                      <div className="skill-score-side">
+                        <span className={`tag meta-tag severity-${selectedSkill.risk_tier}`}>{skillRiskLabel(selectedSkill.risk_tier)}</span>
+                        <span className={`tag ${selectedSkill.scan_status === "ready" ? "allow" : selectedSkill.scan_status === "stale" ? "warn" : "challenge"}`}>
+                          {skillScanStatusLabel(selectedSkill.scan_status)}
+                        </span>
+                      </div>
                     </div>
-                    <div className="skill-score-side">
-                      <span className={`tag meta-tag severity-${selectedSkill.risk_tier}`}>{skillRiskLabel(selectedSkill.risk_tier)}</span>
-                      <span className={`tag ${selectedSkill.scan_status === "ready" ? "allow" : selectedSkill.scan_status === "stale" ? "warn" : "challenge"}`}>
-                        {skillScanStatusLabel(selectedSkill.scan_status)}
-                      </span>
+                    <div className="skill-score-track" aria-hidden="true">
+                      <span style={{ width: `${Math.max(6, selectedSkill.risk_score)}%` }} />
+                    </div>
+                    <div className="skill-score-meta">
+                      <span>{ui("置信度", "Confidence")} {formatConfidence(selectedSkill.confidence)}</span>
+                      <span>{ui("近 24h challenge / block", "24h challenge / block")} {selectedSkill.intercept_count_24h}</span>
+                      {selectedSkill.is_drifted ? <span>{ui("内容变了但版本没变", "Changed without version update")}</span> : null}
                     </div>
                   </div>
-                  <div className="skill-score-track" aria-hidden="true">
-                    <span style={{ width: `${Math.max(6, selectedSkill.risk_score)}%` }} />
-                  </div>
-                  <div className="skill-score-meta">
-                    <span>{ui("置信度", "Confidence")} {formatConfidence(selectedSkill.confidence)}</span>
-                    <span>{ui("近 24h challenge / block", "24h challenge / block")} {selectedSkill.intercept_count_24h}</span>
-                    {selectedSkill.is_drifted ? <span>{ui("内容变了但版本没变", "Changed without version update")}</span> : null}
-                  </div>
-                </div>
 
-                <div className="skill-meta-grid">
-                  <div className="skill-meta-item">
-                    <span>{ui("版本", "Version")}</span>
-                    <strong>{selectedSkill.version || ui("未声明", "Undeclared")}</strong>
+                  <div className="skill-meta-grid">
+                    <div className="skill-meta-item">
+                      <span>{ui("版本", "Version")}</span>
+                      <strong>{selectedSkill.version || ui("未声明", "Undeclared")}</strong>
+                    </div>
+                    <div className="skill-meta-item">
+                      <span>{ui("作者", "Author")}</span>
+                      <strong>{selectedSkill.author || ui("未声明", "Undeclared")}</strong>
+                    </div>
+                    <div className="skill-meta-item">
+                      <span>{ui("来源", "Source")}</span>
+                      <strong>{skillSourceLabel(selectedSkill.source, selectedSkill.source_detail)}</strong>
+                    </div>
+                    <div className="skill-meta-item">
+                      <span>{ui("状态", "State")}</span>
+                      <strong>{skillStateLabel(selectedSkill.state)}</strong>
+                    </div>
+                    <div className="skill-meta-item skill-meta-item-wide">
+                      <span>{ui("安装路径", "Install Path")}</span>
+                      <strong>{selectedSkill.install_path}</strong>
+                    </div>
+                    <div className="skill-meta-item skill-meta-item-wide">
+                      <span>{ui("当前哈希", "Current Hash")}</span>
+                      <strong>{selectedSkill.current_hash}</strong>
+                    </div>
                   </div>
-                  <div className="skill-meta-item">
-                    <span>{ui("作者", "Author")}</span>
-                    <strong>{selectedSkill.author || ui("未声明", "Undeclared")}</strong>
-                  </div>
-                  <div className="skill-meta-item">
-                    <span>{ui("来源", "Source")}</span>
-                    <strong>{skillSourceLabel(selectedSkill.source, selectedSkill.source_detail)}</strong>
-                  </div>
-                  <div className="skill-meta-item">
-                    <span>{ui("状态", "State")}</span>
-                    <strong>{skillStateLabel(selectedSkill.state)}</strong>
-                  </div>
-                  <div className="skill-meta-item skill-meta-item-wide">
-                    <span>{ui("安装路径", "Install Path")}</span>
-                    <strong>{selectedSkill.install_path}</strong>
-                  </div>
-                  <div className="skill-meta-item skill-meta-item-wide">
-                    <span>{ui("当前哈希", "Current Hash")}</span>
-                    <strong>{selectedSkill.current_hash}</strong>
-                  </div>
-                </div>
 
-                <section className="skill-section">
-                  <div className="skill-section-head">
-                    <h4>{ui("当前发现的风险信号", "Current Risk Signals")}</h4>
-                    <span className="meta-pill">{selectedSkillFindings.length}</span>
-                  </div>
-                  {selectedSkillFindings.length === 0 ? (
-                    <div className="chart-empty">{ui("最近一次扫描没有发现新的高风险信号。", "No new high-risk signals were found in the latest scan.")}</div>
-                  ) : (
-                    <div className="skill-finding-list">
-                      {selectedSkillFindings.map((finding, index) => (
-                        <article key={`${finding.code}-${index}`} className="skill-finding-card">
-                          <div className="skill-finding-head">
-                            <strong>{skillReasonLabel(finding.code)}</strong>
-                            <div className="skill-row-tags">
-                              <span className="tag meta-tag">{skillSeverityLabel(finding.severity)}</span>
-                              <DecisionTag decision={finding.decision} />
+                  <section className="skill-section">
+                    <div className="skill-section-head">
+                      <h4>{ui("当前发现的风险信号", "Current Risk Signals")}</h4>
+                      <span className="meta-pill">{selectedSkillFindings.length}</span>
+                    </div>
+                    {selectedSkillFindings.length === 0 ? (
+                      <div className="chart-empty">{ui("最近一次扫描没有发现新的高风险信号。", "No new high-risk signals were found in the latest scan.")}</div>
+                    ) : (
+                      <div className="skill-finding-list">
+                        {selectedSkillFindings.map((finding, index) => (
+                          <article key={`${finding.code}-${index}`} className="skill-finding-card">
+                            <div className="skill-finding-head">
+                              <strong>{skillReasonLabel(finding.code)}</strong>
+                              <div className="skill-row-tags">
+                                <span className="tag meta-tag">{skillSeverityLabel(finding.severity)}</span>
+                                <DecisionTag decision={finding.decision} />
+                              </div>
                             </div>
-                          </div>
-                          <p>{finding.detail}</p>
-                          {finding.excerpt ? <code>{finding.excerpt}</code> : null}
-                        </article>
-                      ))}
-                    </div>
-                  )}
-                </section>
+                            <p>{finding.detail}</p>
+                            {finding.excerpt ? <code>{finding.excerpt}</code> : null}
+                          </article>
+                        ))}
+                      </div>
+                    )}
+                  </section>
 
-                <section className="skill-section">
-                  <div className="skill-section-head">
-                    <h4>{ui("最近活动", "Recent Activity")}</h4>
-                    <span className="meta-pill">{selectedSkillActivity.length}</span>
-                  </div>
-                  {skillDetailLoading && selectedSkillActivity.length === 0 ? (
-                    <div className="chart-empty">{ui("活动加载中...", "Loading activity...")}</div>
-                  ) : selectedSkillActivity.length === 0 ? (
-                    <div className="chart-empty">{ui("当前没有额外活动记录。", "No extra activity records yet.")}</div>
-                  ) : (
-                    <div className="skill-activity-list">
-                      {selectedSkillActivity.map((activity, index) => (
-                        <article key={`${activity.kind}-${activity.ts}-${index}`} className="skill-activity-item">
-                          <div className="skill-activity-top">
-                            <strong>{skillActivityLabel(activity.kind)}</strong>
-                            <span>{formatTime(activity.ts)}</span>
-                          </div>
-                          <div className="skill-activity-title">{activity.title === activity.kind ? skillActivityLabel(activity.kind) : activity.title}</div>
-                          <p>{activity.detail}</p>
-                        </article>
-                      ))}
+                  <section className="skill-section">
+                    <div className="skill-section-head">
+                      <h4>{ui("最近活动", "Recent Activity")}</h4>
+                      <span className="meta-pill">{selectedSkillActivity.length}</span>
                     </div>
-                  )}
-                </section>
-              </>
-            )}
-          </aside>
-        </div>
+                    {skillDetailLoading && selectedSkillActivity.length === 0 ? (
+                      <div className="chart-empty">{ui("活动加载中...", "Loading activity...")}</div>
+                    ) : selectedSkillActivity.length === 0 ? (
+                      <div className="chart-empty">{ui("当前没有额外活动记录。", "No extra activity records yet.")}</div>
+                    ) : (
+                      <div className="skill-activity-list">
+                        {selectedSkillActivity.map((activity, index) => (
+                          <article key={`${activity.kind}-${activity.ts}-${index}`} className="skill-activity-item">
+                            <div className="skill-activity-top">
+                              <strong>{skillActivityLabel(activity.kind)}</strong>
+                              <span>{formatTime(activity.ts)}</span>
+                            </div>
+                            <div className="skill-activity-title">{activity.title === activity.kind ? skillActivityLabel(activity.kind) : activity.title}</div>
+                            <p>{activity.detail}</p>
+                          </article>
+                        ))}
+                      </div>
+                    )}
+                  </section>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         <section className="panel-card skill-policy-panel">
           <div className="card-head">

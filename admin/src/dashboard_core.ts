@@ -78,11 +78,11 @@ export const TAB_ITEMS = [
 
 export function tabLabel(tabId: string): string {
   if (tabId === "overview") return ui("概览", "Overview");
-  if (tabId === "hardening") return ui("系统加固", "Claw Guard");
+  if (tabId === "hardening") return ui("系统", "System");
   if (tabId === "accounts") return ui("账号", "Accounts");
-  if (tabId === "rules") return ui("策略", "Strategy");
-  if (tabId === "skills") return ui("Skill", "Skill");
-  if (tabId === "events") return ui("拦截记录", "Interceptions");
+  if (tabId === "rules") return ui("工具", "Tools");
+  if (tabId === "skills") return ui("Skills", "Skills");
+  if (tabId === "events") return ui("记录", "Records");
   return tabId;
 }
 
@@ -128,7 +128,7 @@ export const CHART_THEME = {
 
 export const DECISION_SOURCE_TEXT = {
   rule: { "zh-CN": "规则命中", en: "Rule match" },
-  file_rule: { "zh-CN": "目录例外", en: "Directory override" },
+  file_rule: { "zh-CN": "设置例外目录", en: "Exception directory" },
   default: { "zh-CN": "默认放行", en: "Default allow" },
   approval: { "zh-CN": "审批放行", en: "Approval grant" },
   account: { "zh-CN": "账号策略", en: "Account policy" }

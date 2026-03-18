@@ -128,4 +128,3 @@ test("claw guard detector only reports browser sandbox when browser config exist
   );
   assert.equal(withBrowser.findings.some((item) => item.id === "browser_sandbox_missing"), true);
 });
-

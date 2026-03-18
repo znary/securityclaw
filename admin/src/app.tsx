@@ -1523,17 +1523,29 @@ function App() {
     });
   }, [hasPendingSkillPolicyChanges, loadSkillData]);
 
+  const closeSkillDetail = useCallback(() => {
+    setSelectedSkillId("");
+    setSkillDetailPayload(null);
+  }, []);
+
+  const openSkillDetail = useCallback((skillId: string) => {
+    setSelectedSkillId(skillId);
+    setSkillDetailPayload(null);
+  }, []);
+
   useEffect(() => {
     if (skillItems.length === 0) {
-      setSelectedSkillId("");
-      setSkillDetailPayload(null);
+      closeSkillDetail();
+      return;
+    }
+    if (!selectedSkillId) {
       return;
     }
     const selectedStillExists = skillItems.some((item) => item.skill_id === selectedSkillId);
     if (!selectedStillExists) {
-      setSelectedSkillId(skillItems[0].skill_id);
+      closeSkillDetail();
     }
-  }, [selectedSkillId, skillItems]);
+  }, [closeSkillDetail, selectedSkillId, skillItems]);
 
   useEffect(() => {
     if (!selectedSkillId) {
@@ -1542,6 +1554,12 @@ function App() {
     }
     void loadSkillDetail(selectedSkillId, { silent: activeTab !== "skills" });
   }, [activeTab, loadSkillDetail, selectedSkillId]);
+
+  useEffect(() => {
+    if (activeTab !== "skills" && selectedSkillId) {
+      closeSkillDetail();
+    }
+  }, [activeTab, closeSkillDetail, selectedSkillId]);
 
   useEffect(() => {
     if (activeTab !== "hardening") {
@@ -1560,7 +1578,7 @@ function App() {
   }, [activeTab, loadHardeningStatus, locale]);
 
   useEffect(() => {
-    if (!filePickerOpen && !fileRuleDeleteTarget && !skillConfirmAction && !selectedHardeningFindingId) {
+    if (!filePickerOpen && !fileRuleDeleteTarget && !skillConfirmAction && !selectedHardeningFindingId && !selectedSkillId) {
       return undefined;
     }
     const onKeyDown = (event: KeyboardEvent) => {
@@ -1574,6 +1592,10 @@ function App() {
           setSkillConfirmAction(null);
           return;
         }
+        if (selectedSkillId) {
+          closeSkillDetail();
+          return;
+        }
         if (fileRuleDeleteTarget) {
           setFileRuleDeleteTarget(null);
           return;
@@ -1583,7 +1605,7 @@ function App() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [filePickerOpen, fileRuleDeleteTarget, selectedHardeningFindingId, skillConfirmAction]);
+  }, [closeSkillDetail, filePickerOpen, fileRuleDeleteTarget, selectedHardeningFindingId, selectedSkillId, skillConfirmAction]);
 
   useEffect(() => {
     if (hasPendingDashboardChanges || saving || skillPolicySaving || skillActionLoading) {
@@ -1738,7 +1760,7 @@ function App() {
     }));
     setSaving(true);
     setError("");
-    setMessage(ui("策略模型自动保存中...", "Saving strategy model changes..."));
+    setMessage(ui("工具自动保存中...", "Saving tool settings..."));
     try {
       const response = await fetch("/api/strategy", {
         method: "PUT",
@@ -1759,8 +1781,8 @@ function App() {
       const details = `${payload.message || ""}${suffix}`.trim();
       setMessage(
         details
-          ? `${ui("策略已自动保存。", "Strategy saved automatically.")} ${details}`
-          : ui("策略已自动保存。", "Strategy saved automatically.")
+          ? `${ui("工具已自动保存。", "Tool settings saved automatically.")} ${details}`
+          : ui("工具已自动保存。", "Tool settings saved automatically.")
       );
       setPublishedStrategyModel(clone(normalizedStrategy));
       await loadData({ syncRules: false, syncAccounts: false, silent: true });
@@ -1922,8 +1944,8 @@ function App() {
     }
     setMessage(
       ui(
-        "检测到策略模型变更，正在自动保存...",
-        "Strategy model changes detected. Saving automatically..."
+        "检测到工具变更，正在自动保存...",
+        "Tool settings changed. Saving automatically..."
       )
     );
     const timer = setTimeout(() => {
@@ -1960,7 +1982,7 @@ function App() {
 
   function openSkillWorkspace(skillId = "") {
     if (skillId) {
-      setSelectedSkillId(skillId);
+      openSkillDetail(skillId);
     }
     switchTab("skills");
   }
@@ -2581,7 +2603,8 @@ function App() {
           skillPolicySaving={skillPolicySaving}
           skillConfirmAction={skillConfirmAction}
           onRefresh={() => void loadSkillData({ silent: false, syncPolicy: !hasPendingSkillPolicyChanges })}
-          onSelectSkill={setSelectedSkillId}
+          onSelectSkill={openSkillDetail}
+          onCloseSkillDetail={closeSkillDetail}
           onSetSkillRiskFilter={setSkillRiskFilter}
           onSetSkillStateFilter={setSkillStateFilter}
           onSetSkillSourceFilter={setSkillSourceFilter}

@@ -342,7 +342,7 @@ export function OverviewPanel({
                 <p>{skillPostureDescription}</p>
               </div>
               <button className="ghost small" type="button" onClick={() => onOpenSkillWorkspace()}>
-                {ui("查看 Skill 面板", "Open Skill Panel")}
+                {ui("查看 Skills 面板", "Open Skills Panel")}
               </button>
             </div>
 
@@ -528,7 +528,7 @@ export function EventsPanel({
     <section id="panel-events" className="tab-panel" role="tabpanel" aria-labelledby="tab-events">
       <div className="panel-card dashboard-panel">
         <div className="card-head card-head-compact">
-          <h2>{ui("拦截记录", "Interceptions")}</h2>
+          <h2>{ui("记录", "Records")}</h2>
           <div className="header-actions">
             {hasActiveDecisionFilter ? (
               <span className="meta-pill meta-pill-highlight">

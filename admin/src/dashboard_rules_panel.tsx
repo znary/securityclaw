@@ -50,28 +50,15 @@ export function RulesPanel({
     <section id="panel-rules" className="tab-panel" role="tabpanel" aria-labelledby="tab-rules">
       <div className="panel-card strategy-panel dashboard-panel">
         <div className="card-head">
-          <h2>{ui("策略", "Strategy")}</h2>
+          <h2>{ui("工具", "Tools")}</h2>
           <div className="rule-meta">
             <span className="meta-pill">{ui("能力", "Capabilities")} {capabilityPolicies.length}</span>
             <span className="meta-pill">{ui("附加限制", "Additional Restrictions")} {additionalRestrictionCount}</span>
-            <span className="meta-pill">{ui("目录例外", "Directory Overrides")} {directoryOverrideCount}</span>
+            <span className="meta-pill">{ui("设置例外目录", "Exception Directories")} {directoryOverrideCount}</span>
           </div>
         </div>
 
         <section className="rule-group rule-group-shell" aria-label={ui("访问基线", "Access baseline")}>
-          <div className="card-head">
-            <div>
-              <span className="eyebrow">{ui("Access", "Access")}</span>
-              <h3>{ui("先看能力默认策略，再看附加限制", "Capability baseline first, then additional restrictions")}</h3>
-              <p className="sensitive-path-intro">
-                {ui(
-                  "先定义每类能力的默认处理方式，再看哪些风险条件会升级成提醒、确认或拦截。需要管理员确认的规则会在执行时生成审批单。",
-                  "Define the default posture for each capability first, then inspect which risk conditions escalate to warn, challenge, or block. Rules that need admin approval will still generate approval requests at runtime."
-                )}
-              </p>
-            </div>
-          </div>
-
           {capabilityPolicies.length === 0 ? (
             <div className="chart-empty">{ui("暂无能力配置。", "No capability policies configured.")}</div>
           ) : (

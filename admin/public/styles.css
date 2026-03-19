@@ -2704,6 +2704,12 @@ tbody tr:hover {
   gap: 24px;
 }
 
+.tool-capability-tablist {
+  width: fit-content;
+  max-width: 100%;
+  flex-wrap: wrap;
+}
+
 .rule-capability-group {
   position: relative;
   gap: 16px;
@@ -2838,6 +2844,34 @@ tbody tr:hover {
   color: var(--ink);
   font-size: 15px;
   font-weight: 700;
+}
+
+.rule-inline-info {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+  display: grid;
+  gap: 2px;
+}
+
+.rule-inline-info-label {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.rule-inline-info.allow .rule-inline-info-label {
+  color: var(--good);
+}
+
+.rule-inline-info.warn .rule-inline-info-label,
+.rule-inline-info.challenge .rule-inline-info-label {
+  color: var(--warn);
+}
+
+.rule-inline-info.block .rule-inline-info-label {
+  color: var(--bad);
 }
 
 .rule-action-button {
@@ -3330,6 +3364,24 @@ tbody tr:hover {
   color: var(--ink);
   padding: 0 12px;
   box-shadow: var(--shadow-inset);
+}
+
+#panel-rules select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 36px;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+    linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position:
+    calc(100% - 18px) calc(50% - 1px),
+    calc(100% - 13px) calc(50% - 1px);
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+
+#panel-rules select::-ms-expand {
+  display: none;
 }
 
 .skill-list {

@@ -1,3 +1,4 @@
+import { useEffect, useMemo, useState } from "react";
 import type { CapabilityPolicy, StrategyPolicyRule } from "../../src/domain/services/strategy_model.ts";
 import type { Decision, PolicyMatch } from "../../src/types.ts";
 import { DECISION_OPTIONS, ui } from "./dashboard_core.ts";
@@ -71,6 +72,31 @@ export function RulesPanel({
   onSetAdminAccount,
 }: RulesPanelProps) {
   const toolControlsDisabled = !managementEffective;
+  const capabilityGroups = useMemo(
+    () =>
+      capabilityPolicies.map((capability, index) => ({
+        capability,
+        id: `${String(capability?.capability_id || "capability").replace(/[^a-zA-Z0-9_-]/g, "-")}-${index}`,
+      })),
+    [capabilityPolicies]
+  );
+  const [activeCapabilityGroupId, setActiveCapabilityGroupId] = useState("");
+
+  useEffect(() => {
+    if (capabilityGroups.length === 0) {
+      setActiveCapabilityGroupId("");
+      return;
+    }
+    if (!capabilityGroups.some((group) => group.id === activeCapabilityGroupId)) {
+      setActiveCapabilityGroupId(capabilityGroups[0].id);
+    }
+  }, [activeCapabilityGroupId, capabilityGroups]);
+
+  const activeCapabilityGroup = useMemo(
+    () => capabilityGroups.find((group) => group.id === activeCapabilityGroupId) || capabilityGroups[0] || null,
+    [activeCapabilityGroupId, capabilityGroups]
+  );
+  const activeCapability = activeCapabilityGroup?.capability || null;
   return (
     <section id="panel-rules" className="tab-panel" role="tabpanel" aria-labelledby="tab-rules">
       <div className="panel-card strategy-panel dashboard-panel">
@@ -117,15 +143,39 @@ export function RulesPanel({
             <div className="chart-empty">{ui("暂无能力配置。", "No capability policies configured.")}</div>
           ) : (
             <div className="rule-capability-list">
-              {capabilityPolicies.map((capability) => (
-                <section key={capability.capability_id} className="rule-group rule-capability-group">
+              <div className="tablist tool-capability-tablist" role="tablist" aria-label={ui("工具能力分组", "Tool capability groups")}>
+                {capabilityGroups.map((group) => (
+                  <button
+                    key={group.id}
+                    id={`tool-group-tab-${group.id}`}
+                    className={`tab-button ${activeCapabilityGroup?.id === group.id ? "active" : ""}`}
+                    type="button"
+                    role="tab"
+                    aria-selected={activeCapabilityGroup?.id === group.id}
+                    aria-controls={`tool-group-panel-${group.id}`}
+                    onClick={() => setActiveCapabilityGroupId(group.id)}
+                  >
+                    <span className="tab-label">{capabilityLabel(group.capability.capability_id)}</span>
+                    <span className="tab-count">{group.capability.rules.length}</span>
+                  </button>
+                ))}
+              </div>
+
+              {activeCapabilityGroup && activeCapability ? (
+                <section
+                  key={activeCapabilityGroup.id}
+                  id={`tool-group-panel-${activeCapabilityGroup.id}`}
+                  className="rule-group rule-capability-group"
+                  role="tabpanel"
+                  aria-labelledby={`tool-group-tab-${activeCapabilityGroup.id}`}
+                >
                   <div className="rule-head rule-capability-head">
                     <div>
-                      <div className="rule-title">{capabilityLabel(capability.capability_id)}</div>
-                      <div className="rule-desc">{capabilityDescription(capability.capability_id)}</div>
+                      <div className="rule-title">{capabilityLabel(activeCapability.capability_id)}</div>
+                      <div className="rule-desc">{capabilityDescription(activeCapability.capability_id)}</div>
                     </div>
                     <div className="rule-head-side">
-                      <DecisionTag decision={capability.default_decision} />
+                      <DecisionTag decision={activeCapability.default_decision} />
                       <span className="tag meta-tag">{ui("Baseline", "Baseline")}</span>
                     </div>
                   </div>
@@ -135,37 +185,36 @@ export function RulesPanel({
                       <span>{ui("默认策略", "Baseline policy")}</span>
                       <select
                         className="rule-select-control"
-                        value={capability.default_decision}
+                        value={activeCapability.default_decision}
                         disabled={toolControlsDisabled}
-                        aria-label={ui(`${capabilityLabel(capability.capability_id)} 默认策略`, `${capabilityLabel(capability.capability_id)} baseline policy`)}
+                        aria-label={ui(`${capabilityLabel(activeCapability.capability_id)} 默认策略`, `${capabilityLabel(activeCapability.capability_id)} baseline policy`)}
                         onChange={(event) =>
-                          onSetCapabilityDefaultDecision(capability.capability_id, event.target.value as Decision)
+                          onSetCapabilityDefaultDecision(activeCapability.capability_id, event.target.value as Decision)
                         }
                       >
                         {DECISION_OPTIONS.map((decision) => (
-                          <option key={`${capability.capability_id}-${decision}`} value={decision}>
+                          <option key={`${activeCapability.capability_id}-${decision}`} value={decision}>
                             {decisionLabel(decision)}
                           </option>
                         ))}
                       </select>
                     </label>
+                    <div className={`rule-inline-info ${activeCapability.default_decision}`}>
+                      <span className="rule-inline-info-label">
+                        {ui("默认策略说明", "Baseline effect")} · {decisionLabel(activeCapability.default_decision)}
+                      </span>
+                      <span>{capabilityBaselineSummary(activeCapability)}</span>
+                    </div>
                   </div>
 
-                  <div className={`rule-helper ${capability.default_decision}`}>
-                    <span className="rule-helper-label">
-                      {ui("默认策略说明", "Baseline effect")} · {decisionLabel(capability.default_decision)}
-                    </span>
-                    <p>{capabilityBaselineSummary(capability)}</p>
-                  </div>
-
-                  {capability.rules.length === 0 ? (
+                  {activeCapability.rules.length === 0 ? (
                     <div className="chart-empty">{ui("当前能力下没有额外附加限制。", "No additional restrictions for this capability.")}</div>
                   ) : (
                     <div className="rules">
-                      {capability.rules.map((rule, index) => {
+                      {activeCapability.rules.map((rule, index) => {
                         const policy = { ...rule, match: rule.context };
                         return (
-                          <article key={`${capability.capability_id}:${rule.rule_id || index}`} className="rule">
+                          <article key={`${activeCapability.capability_id}:${rule.rule_id || index}`} className="rule">
                             <div className="rule-head">
                               <div className="rule-title">{policyTitle(policy, index)}</div>
                               <div className="rule-head-side">
@@ -194,21 +243,21 @@ export function RulesPanel({
                                   ))}
                                 </select>
                               </label>
+                              <div className={`rule-inline-info ${rule.decision}`}>
+                                <span className="rule-inline-info-label">
+                                  {ui("当前处理方式", "Current handling")} · {decisionLabel(rule.decision)}
+                                </span>
+                                <span>{userImpactSummary(rule)}</span>
+                              </div>
                             </div>
                             <div className="rule-desc">{ruleDescription(policy)}</div>
-                            <div className={`rule-helper ${rule.decision}`}>
-                              <span className="rule-helper-label">
-                                {ui("当前处理方式", "Current handling")} · {decisionLabel(rule.decision)}
-                              </span>
-                              <p>{userImpactSummary(rule)}</p>
-                            </div>
                           </article>
                         );
                       })}
                     </div>
                   )}
 
-                  {capability.capability_id === "filesystem" ? (
+                  {activeCapability.capability_id === "filesystem" ? (
                     <FilesystemOverridesSection
                       inline
                       disabled={toolControlsDisabled}
@@ -217,7 +266,7 @@ export function RulesPanel({
                     />
                   ) : null}
                 </section>
-              ))}
+              ) : null}
             </div>
           )}
         </section>

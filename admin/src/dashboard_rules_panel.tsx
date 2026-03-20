@@ -203,7 +203,7 @@ export function RulesPanel({
           <div className="rule-meta">
             <span className="meta-pill">{ui("能力", "Capabilities")} {capabilityPolicies.length}</span>
             <span className="meta-pill">{ui("附加限制", "Additional Restrictions")} {additionalRestrictionCount}</span>
-            <span className="meta-pill">{ui("设置例外目录", "Exception Directories")} {directoryOverrideCount}</span>
+            <span className="meta-pill">{ui("自定义目录", "Custom Directories")} {directoryOverrideCount}</span>
           </div>
         </div>
 

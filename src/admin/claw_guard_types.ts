@@ -2,7 +2,7 @@ export type ClawGuardSeverity = "critical" | "high" | "medium" | "low";
 export type ClawGuardRepairKind = "direct" | "guided" | "read_only";
 export type ClawGuardConfigSource = "gateway-rpc" | "local-file";
 export type ClawGuardFindingRelationType = "related" | "choice_resolves";
-export type ClawGuardFindingGroupKind = "gateway" | "channel" | "sandbox";
+export type ClawGuardFindingGroupKind = "gateway" | "channel" | "sandbox" | "workspace";
 export type ClawGuardFindingScopeType = "global" | "channel";
 
 export type ClawGuardFinding = {
@@ -63,6 +63,13 @@ export type ClawGuardRepairChoice = {
   disabledReason?: string;
 };
 
+export type ClawGuardReferenceTemplate = {
+  id: string;
+  label: string;
+  language?: string;
+  content: string;
+};
+
 export type ClawGuardPassedItem = {
   id: string;
   title: string;
@@ -107,6 +114,7 @@ export type ClawGuardPreviewPayload = {
   config_paths: string[];
   repair_choices: ClawGuardRepairChoice[];
   selected_choice_id?: string;
+  reference_templates?: ClawGuardReferenceTemplate[];
 };
 
 export type ClawGuardApplyPayload = {
@@ -131,6 +139,20 @@ export type ClawGuardConfigSnapshot = {
   writeSupported: boolean;
   writeReason?: string;
   baseHash?: string;
+  workspace?: ClawGuardWorkspaceSnapshot;
+};
+
+export type ClawGuardWorkspaceFileSnapshot = {
+  path: string;
+  exists: boolean;
+  content?: string;
+  truncated?: boolean;
+  readError?: string;
+};
+
+export type ClawGuardWorkspaceSnapshot = {
+  dir: string;
+  soul: ClawGuardWorkspaceFileSnapshot;
 };
 
 export type ClawGuardFixPlan = {
@@ -148,4 +170,5 @@ export type ClawGuardFixPlan = {
   restartRequired: boolean;
   canApply: boolean;
   applyDisabledReason?: string;
+  referenceTemplates?: ClawGuardReferenceTemplate[];
 };

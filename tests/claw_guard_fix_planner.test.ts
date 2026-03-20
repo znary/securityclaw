@@ -1,16 +1,20 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildClawGuardFixPlan } from "../src/admin/claw_guard_fix_planner.ts";
+import { buildClawGuardFixPlan, toClawGuardPreviewPayload } from "../src/admin/claw_guard_fix_planner.ts";
 import type { ClawGuardConfigSnapshot } from "../src/admin/claw_guard_types.ts";
 
-function createSnapshot(config: Record<string, unknown>): ClawGuardConfigSnapshot {
+function createSnapshot(
+  config: Record<string, unknown>,
+  extra: Partial<ClawGuardConfigSnapshot> = {},
+): ClawGuardConfigSnapshot {
   return {
     config,
     source: "gateway-rpc",
     gatewayOnline: true,
     writeSupported: true,
     baseHash: "hash",
+    ...extra,
   };
 }
 
@@ -147,4 +151,103 @@ test("read-only preview keeps manual repair details", () => {
   });
   assert.equal(plan.canApply, false);
   assert.match(String(plan.applyDisabledReason), /Gateway RPC is unavailable/i);
+});
+
+test("dm allowlist fallback switches back to pairing", () => {
+  const plan = buildClawGuardFixPlan({
+    snapshot: createSnapshot({
+      channels: {
+        telegram: {
+          enabled: true,
+          dmPolicy: "allowlist",
+          allowFrom: [],
+        },
+      },
+    }),
+    findingId: "dm_allowlist_missing::telegram",
+    locale: "en",
+    environment: {
+      sandboxImageReady: true,
+      browserSandboxImageReady: true,
+    },
+  });
+
+  assert.equal(plan.canApply, true);
+  assert.deepEqual(plan.patch, {
+    channels: {
+      telegram: {
+        dmPolicy: "pairing",
+      },
+    },
+  });
+});
+
+test("sandbox isolation fix tightens workspace access and scope", () => {
+  const plan = buildClawGuardFixPlan({
+    snapshot: createSnapshot({
+      agents: {
+        defaults: {
+          sandbox: {
+            mode: "non-main",
+            workspaceAccess: "rw",
+            scope: "agent",
+          },
+        },
+      },
+    }),
+    findingId: "sandbox_isolation_defaults_missing",
+    locale: "en",
+    environment: {
+      sandboxImageReady: true,
+      browserSandboxImageReady: true,
+    },
+  });
+
+  assert.equal(plan.canApply, true);
+  assert.deepEqual(plan.patch, {
+    agents: {
+      defaults: {
+        sandbox: {
+          workspaceAccess: "none",
+          scope: "session",
+        },
+      },
+    },
+  });
+});
+
+test("workspace bootstrap guidance stays manual in writable mode", () => {
+  const plan = buildClawGuardFixPlan({
+    snapshot: createSnapshot(
+      {},
+      {
+        workspace: {
+          dir: "/tmp/openclaw-workspace",
+          soul: {
+            path: "/tmp/openclaw-workspace/SOUL.md",
+            exists: false,
+          },
+        },
+      },
+    ),
+    findingId: "workspace_bootstrap_guardrails_missing",
+    locale: "en",
+    environment: {
+      sandboxImageReady: true,
+      browserSandboxImageReady: true,
+    },
+  });
+
+  assert.equal(plan.canApply, false);
+  assert.equal(plan.patch, null);
+  assert.match(plan.currentValue, /SOUL\.md/);
+  assert.doesNotMatch(plan.currentValue, /HEARTBEAT\.md/);
+  assert.match(plan.currentValue, /baseline guardrails incomplete/i);
+  assert.match(plan.recommendedValue, /suggested SOUL\.md template/i);
+  assert.equal(plan.referenceTemplates?.[0]?.label, "SOUL.md");
+  assert.match(String(plan.referenceTemplates?.[0]?.content), /# SOUL\.md - Who You Are/);
+  assert.deepEqual(plan.configPaths, ["/tmp/openclaw-workspace/SOUL.md"]);
+  const preview = toClawGuardPreviewPayload(plan);
+  assert.equal(preview.reference_templates?.[0]?.label, "SOUL.md");
+  assert.match(String(plan.applyDisabledReason), /manual review/i);
 });

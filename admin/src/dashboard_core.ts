@@ -138,7 +138,7 @@ export const CHART_THEME = {
 
 export const DECISION_SOURCE_TEXT = {
   rule: { "zh-CN": "规则命中", en: "Rule match" },
-  file_rule: { "zh-CN": "设置例外目录", en: "Exception directory" },
+  file_rule: { "zh-CN": "自定义目录", en: "Custom directory" },
   default: { "zh-CN": "默认放行", en: "Default allow" },
   approval: { "zh-CN": "审批放行", en: "Approval grant" },
   account: { "zh-CN": "账号策略", en: "Account policy" }

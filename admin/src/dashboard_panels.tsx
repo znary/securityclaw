@@ -440,8 +440,12 @@ export function OverviewPanel({
                 <strong>{systemOverviewStats.restart_required_count}</strong>
               </div>
               <div className="insight-item">
-                <span>{ui("已通过 / 已豁免", "Passed / Exempted")}</span>
-                <strong>{systemOverviewStats.passed_count} / {systemOverviewStats.exempted_count}</strong>
+                <span>{ui("已通过", "Passed")}</span>
+                <strong>{systemOverviewStats.passed_count}</strong>
+              </div>
+              <div className="insight-item">
+                <span>{ui("已豁免", "Exempted")}</span>
+                <strong>{systemOverviewStats.exempted_count}</strong>
               </div>
             </div>
           </aside>
@@ -512,6 +516,9 @@ export function OverviewPanel({
             )}
           </article>
 
+        </div>
+
+        <div className="overview-focus-grid">
           <article className="panel-card overview-module-card overview-skill-card">
             <OverviewSectionHeader
               title={ui("Skills 安全分析", "Skills Security Analysis")}
@@ -536,16 +543,8 @@ export function OverviewPanel({
                 <strong>{skillOverviewStats.challenge_block_24h}</strong>
               </div>
               <div className="overview-skill-stat">
-                <span>{ui("未声明变更告警", "Undeclared Change Alerts")}</span>
-                <strong>{skillOverviewStats.drift_alerts}</strong>
-              </div>
-              <div className="overview-skill-stat">
                 <span>{ui("已隔离", "Quarantined")}</span>
                 <strong>{skillOverviewStats.quarantined}</strong>
-              </div>
-              <div className="overview-skill-stat">
-                <span>{ui("受信覆盖", "Trust Overrides")}</span>
-                <strong>{skillOverviewStats.trusted_overrides}</strong>
               </div>
             </div>
 
@@ -584,52 +583,13 @@ export function OverviewPanel({
               </div>
             )}
           </article>
-        </div>
-
-        <div className="overview-charts">
-          <DistributionChart
-            title={ui("消息来源分布", "Message Source Distribution")}
-            subtitle="actor + scope"
-            items={messageSourceDistribution}
-            total={analyticsSampleCount}
-            emptyText={ui("暂无消息来源数据", "No source data yet")}
-            theme={theme}
-          />
-
-          <DistributionChart
-            title={ui("决策来源分布", "Decision Source Distribution")}
-            subtitle="rule / default / approval / account"
-            items={decisionSourceDistribution}
-            total={analyticsSampleCount}
-            emptyText={ui("暂无决策来源数据", "No decision source data yet")}
-            theme={theme}
-          />
-
-          <DistributionChart
-            title={ui("拦截策略命中 Top", "Top Policy Hits")}
-            subtitle={strategySourceCount > 0 ? ui("按规则命中次数排序", "Sorted by hit count") : ui("暂无风险样本", "No risk samples")}
-            items={strategyHitDistribution}
-            total={strategyHitTotal}
-            emptyText={ui("暂无策略命中记录", "No policy hit records")}
-            theme={theme}
-          />
-
-          <DistributionChart
-            title={ui("工具调用分布", "Tool Call Distribution")}
-            subtitle={ui("按最近样本聚合", "Aggregated from recent samples")}
-            items={toolDistribution}
-            total={analyticsSampleCount}
-            emptyText={ui("暂无工具调用记录", "No tool call records")}
-            theme={theme}
-          />
 
           <article className="panel-card chart-card trend-card">
             <div className="chart-head">
               <h3>{ui("24 小时趋势", "24h Trend")}</h3>
-              <span className="chart-subtitle">{trendRangeLabel}{ui("（", " (")}{trendBucketHours}h {ui("/ 桶）", "per bucket)")}</span>
             </div>
-            <div className="chart-surface">
-              <ResponsiveContainer width="100%" height={260}>
+            <div className="chart-surface trend-chart-surface">
+              <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={trendData} margin={{ top: 12, right: 24, left: 4, bottom: 0 }}>
                   <CartesianGrid stroke={chartTheme.grid} strokeDasharray="3 3" />
                   <XAxis
@@ -676,6 +636,45 @@ export function OverviewPanel({
               <span className="trend-peak">{ui("峰值", "Peak")} {trendPeak}</span>
             </div>
           </article>
+        </div>
+
+        <div className="overview-charts">
+          <DistributionChart
+            title={ui("消息来源分布", "Message Source Distribution")}
+            subtitle="actor + scope"
+            items={messageSourceDistribution}
+            total={analyticsSampleCount}
+            emptyText={ui("暂无消息来源数据", "No source data yet")}
+            theme={theme}
+          />
+
+          <DistributionChart
+            title={ui("决策来源分布", "Decision Source Distribution")}
+            subtitle="rule / default / approval / account"
+            items={decisionSourceDistribution}
+            total={analyticsSampleCount}
+            emptyText={ui("暂无决策来源数据", "No decision source data yet")}
+            theme={theme}
+          />
+
+          <DistributionChart
+            title={ui("拦截策略命中 Top", "Top Policy Hits")}
+            subtitle={strategySourceCount > 0 ? ui("按规则命中次数排序", "Sorted by hit count") : ui("暂无风险样本", "No risk samples")}
+            items={strategyHitDistribution}
+            total={strategyHitTotal}
+            emptyText={ui("暂无策略命中记录", "No policy hit records")}
+            theme={theme}
+          />
+
+          <DistributionChart
+            title={ui("工具调用分布", "Tool Call Distribution")}
+            subtitle={ui("按最近样本聚合", "Aggregated from recent samples")}
+            items={toolDistribution}
+            total={analyticsSampleCount}
+            emptyText={ui("暂无工具调用记录", "No tool call records")}
+            theme={theme}
+          />
+
         </div>
       </div>
     </section>

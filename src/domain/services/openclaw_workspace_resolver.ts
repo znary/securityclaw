@@ -21,6 +21,23 @@ function resolveWorkspaceFolderName(env: NodeJS.ProcessEnv): string {
   return "workspace";
 }
 
+export function resolveOpenClawWorkspaceFromConfig(
+  openClawHome: string,
+  config: OpenClawConfigShape | null | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const configuredWorkspace = normalizeString(config?.agents?.defaults?.workspace);
+  if (configuredWorkspace) {
+    return path.normalize(
+      path.isAbsolute(configuredWorkspace)
+        ? path.resolve(configuredWorkspace)
+        : path.resolve(openClawHome, configuredWorkspace),
+    );
+  }
+
+  return path.join(openClawHome, resolveWorkspaceFolderName(env));
+}
+
 export function resolveOpenClawHomeFromStateDir(stateDir: string): string {
   const normalized = path.resolve(stateDir);
   const marker = `${path.sep}extensions${path.sep}securityclaw`;
@@ -42,18 +59,11 @@ export function resolveConfiguredOpenClawWorkspace(
 
   try {
     const parsed = JSON.parse(readFileSync(configPath, "utf8")) as OpenClawConfigShape;
-    const configuredWorkspace = normalizeString(parsed.agents?.defaults?.workspace);
-    if (configuredWorkspace) {
-      return path.normalize(
-        path.isAbsolute(configuredWorkspace)
-          ? path.resolve(configuredWorkspace)
-          : path.resolve(openClawHome, configuredWorkspace),
-      );
-    }
+    return resolveOpenClawWorkspaceFromConfig(openClawHome, parsed, env);
   } catch {
     // Fall back to the conventional workspace path when the config file is
     // missing, unreadable, or uses non-JSON features.
   }
 
-  return path.join(openClawHome, resolveWorkspaceFolderName(env));
+  return resolveOpenClawWorkspaceFromConfig(openClawHome, undefined, env);
 }

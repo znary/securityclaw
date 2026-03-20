@@ -84,21 +84,21 @@ export function FilesystemOverridesSection({
           inline ? "sensitive-path-panel sensitive-path-panel-inline" : "sensitive-path-panel",
           disabled ? "sensitive-path-panel-disabled" : "",
         ].filter(Boolean).join(" ")}
-        aria-label={ui("设置例外目录", "Exception directories")}
+        aria-label={ui("自定义目录", "Custom directories")}
       >
         <div className="sensitive-path-head">
           <div>
-            <h3>{ui("设置例外目录", "Exception Directories")}</h3>
+            <h3>{ui("自定义目录", "Custom Directories")}</h3>
             <p className="sensitive-path-intro">
               {ui(
-                "设置例外目录是文件系统域内的覆盖层，不属于某一个具体文件动作。你可以把它收窄到读、枚举、搜索、写入、删除、归档或执行；不选操作时，默认覆盖这个目录下的全部文件类操作。",
-                "Exception directories are a filesystem-scoped overlay rather than a child of one specific file action. You can narrow them to read, list, search, write, delete, archive, or execute. Leaving the scope empty applies the override to all filesystem-related operations in that directory."
+                "自定义目录是文件系统域内的覆盖层，不属于某一个具体文件动作。你可以把它收窄到读、枚举、搜索、写入、删除、归档或执行；不选操作时，默认覆盖这个目录下的全部文件类操作。",
+                "Custom directories are a filesystem-scoped overlay rather than a child of one specific file action. You can narrow them to read, list, search, write, delete, archive, or execute. Leaving the scope empty applies the override to all filesystem-related operations in that directory."
               )}
             </p>
             {disabled && disabledReason ? <div className="sensitive-path-disabled-note">{disabledReason}</div> : null}
           </div>
           <div className="rule-meta">
-            <span className="meta-pill">{ui("设置例外目录", "Exception Directories")} {normalizedFileRules.length}</span>
+            <span className="meta-pill">{ui("自定义目录", "Custom Directories")} {normalizedFileRules.length}</span>
             <span className="meta-pill">{selectedFileDirectory ? ui("已选择目录", "Directory Selected") : ui("未选择目录", "No Directory Selected")}</span>
           </div>
         </div>
@@ -147,21 +147,21 @@ export function FilesystemOverridesSection({
         {selectedDirectoryRuleExists ? (
           <div className="sensitive-path-validation">
             {ui(
-              "当前目录和操作范围已存在例外。若需调整，请在下方已配置的设置例外目录列表中修改。",
-              "An exception directory already exists for the same directory and operation scope. Edit it in the configured list below."
+              "当前目录和操作范围已存在配置。若需调整，请在下方已配置的自定义目录列表中修改。",
+              "A custom directory already exists for the same directory and operation scope. Edit it in the configured list below."
             )}
           </div>
         ) : null}
 
         <div className="sensitive-path-note">
           {ui(
-            `设置例外目录只影响文件系统相关操作，不会改动 ${capabilityLabel("network")}、${capabilityLabel("runtime")} 等其他能力。若命中这里的目录设置，当前目录会优先按这里的处理方式执行；删掉后再回落到默认策略和附加限制。`,
-            `Exception directories only affect filesystem-related operations and do not change other capabilities such as ${capabilityLabel("network")} or ${capabilityLabel("runtime")}. When one of these directories matches, it takes precedence for that directory; deleting it falls back to the baseline policy and additional restrictions.`
+            `自定义目录只影响文件系统相关操作，不会改动 ${capabilityLabel("network")}、${capabilityLabel("runtime")} 等其他能力。若命中这里的目录设置，当前目录会优先按这里的处理方式执行；删掉后再回落到默认策略和附加限制。`,
+            `Custom directories only affect filesystem-related operations and do not change other capabilities such as ${capabilityLabel("network")} or ${capabilityLabel("runtime")}. When one of these directories matches, it takes precedence for that directory; deleting it falls back to the baseline policy and additional restrictions.`
           )}
         </div>
 
         {normalizedFileRules.length === 0 ? (
-          <div className="chart-empty">{ui("当前还没有设置例外目录。", "No exception directories configured yet.")}</div>
+          <div className="chart-empty">{ui("当前还没有自定义目录。", "No custom directories configured yet.")}</div>
         ) : (
           <div className="sensitive-path-list">
             {normalizedFileRules.map((rule) => (
@@ -279,7 +279,7 @@ export function FilesystemOverridesSection({
           onClick={cancelRemoveFileRule}
         >
           <div className="confirm-dialog-card" onClick={(event) => event.stopPropagation()}>
-            <h4>{ui("确认删除这条例外目录？", "Delete this exception directory?")}</h4>
+            <h4>{ui("确认删除这条自定义目录？", "Delete this custom directory?")}</h4>
             <p className="confirm-dialog-text">
               {ui(
                 "删除后，这个目录会回落到文件系统默认策略和附加限制继续判断。",

@@ -3,8 +3,12 @@ import path from "node:path";
 import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 
+import { resolveOpenClawWorkspaceFromConfig } from "../domain/services/openclaw_workspace_resolver.ts";
 import type { AdminRuntime } from "./server_types.ts";
-import type { ClawGuardConfigSnapshot } from "./claw_guard_types.ts";
+import type {
+  ClawGuardConfigSnapshot,
+  ClawGuardWorkspaceFileSnapshot,
+} from "./claw_guard_types.ts";
 import type { RunProcessSyncResult } from "../runtime/process_runner.ts";
 import { HardeningCache } from "./hardening_cache.ts";
 
@@ -25,6 +29,7 @@ const OPENCLAW_CLI_ENTRY = path.resolve(path.dirname(OPENCLAW_ENTRY), "../opencl
 const DEFAULT_RPC_TIMEOUT_MS = 15000;
 const FAST_RPC_TIMEOUT_MS = 8000;
 const FAST_RPC_GRACE_MS = 1200;
+const MAX_BOOTSTRAP_AUDIT_CHARS = 120000;
 const OPENCLAW_CLI_ENV: NodeJS.ProcessEnv = {
   ...process.env,
   OPENCLAW_HIDE_BANNER: "1",
@@ -33,6 +38,12 @@ const OPENCLAW_CLI_ENV: NodeJS.ProcessEnv = {
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function readErrnoCode(error: unknown): string {
+  return typeof error === "object" && error && "code" in error && typeof error.code === "string"
+    ? error.code
+    : "";
 }
 
 function extractJsonPayload(raw: string): unknown {
@@ -117,6 +128,31 @@ function extractCliJson(result: RunProcessSyncResult): unknown {
   }
 
   throw new Error("OpenClaw CLI did not return a JSON payload");
+}
+
+async function readWorkspaceFileSnapshot(filePath: string): Promise<ClawGuardWorkspaceFileSnapshot> {
+  try {
+    const raw = await readFile(filePath, "utf8");
+    const truncated = raw.length > MAX_BOOTSTRAP_AUDIT_CHARS;
+    return {
+      path: filePath,
+      exists: true,
+      content: truncated ? raw.slice(0, MAX_BOOTSTRAP_AUDIT_CHARS) : raw,
+      ...(truncated ? { truncated: true } : {}),
+    };
+  } catch (error) {
+    if (readErrnoCode(error) === "ENOENT") {
+      return {
+        path: filePath,
+        exists: false,
+      };
+    }
+    return {
+      path: filePath,
+      exists: false,
+      readError: String(error),
+    };
+  }
 }
 
 export class OpenClawConfigClient {
@@ -204,10 +240,26 @@ export class OpenClawConfigClient {
     return extractCliJson(result);
   }
 
+  private async enrichSnapshot(snapshot: ClawGuardConfigSnapshot): Promise<ClawGuardConfigSnapshot> {
+    const workspaceDir = resolveOpenClawWorkspaceFromConfig(
+      this.runtime.openClawHome,
+      snapshot.config,
+      OPENCLAW_CLI_ENV,
+    );
+    const soul = await readWorkspaceFileSnapshot(path.join(workspaceDir, "SOUL.md"));
+    return {
+      ...snapshot,
+      workspace: {
+        dir: workspaceDir,
+        soul,
+      },
+    };
+  }
+
   private async readRpcSnapshot(timeoutMs = DEFAULT_RPC_TIMEOUT_MS): Promise<ClawGuardConfigSnapshot> {
     const payload = asRecord(await this.parseCliJson(["gateway", "call", "config.get", "--params", "{}", "--json"], timeoutMs));
     const config = asRecord(payload.config || payload.resolved || payload.parsed);
-    const snapshot: ClawGuardConfigSnapshot = {
+    const snapshot = await this.enrichSnapshot({
       config,
       ...(typeof payload.path === "string" ? { configPath: payload.path } : {}),
       source: "gateway-rpc",
@@ -217,21 +269,21 @@ export class OpenClawConfigClient {
       ...(typeof payload.hash === "string"
         ? {}
         : { writeReason: "Gateway config hash is unavailable, so patch writes are disabled." }),
-    };
+    });
     this.deps.hardeningCache?.rememberSnapshot(snapshot);
     return snapshot;
   }
 
   private async readLocalSnapshot(writeReason?: string): Promise<ClawGuardConfigSnapshot> {
     const config = asRecord(await this.loadLocalConfig());
-    const snapshot: ClawGuardConfigSnapshot = {
+    const snapshot = await this.enrichSnapshot({
       config,
       configPath: path.join(this.runtime.openClawHome, "openclaw.json"),
       source: "local-file",
       gatewayOnline: false,
       writeSupported: false,
       ...(writeReason ? { writeReason } : {}),
-    };
+    });
     this.deps.hardeningCache?.rememberSnapshot(snapshot);
     return snapshot;
   }

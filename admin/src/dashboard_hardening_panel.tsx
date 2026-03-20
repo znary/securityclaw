@@ -9,13 +9,12 @@ import type {
 import { getActiveAdminLocale, readLocalized, SEVERITY_TEXT, ui } from "./dashboard_core.ts";
 import { OverviewStatCard } from "./dashboard_primitives.tsx";
 
+type ReferenceTemplate = NonNullable<ClawGuardPreviewPayload["reference_templates"]>[number];
+
 type HardeningDisplayGroup = {
   id: string;
   kind: ClawGuardFindingGroup["kind"];
   title: string;
-  subtitle: string;
-  summary: string;
-  relationHint: string;
   findings: ClawGuardFinding[];
   severity: ClawGuardFinding["severity"];
   exemptedCount: number;
@@ -82,6 +81,49 @@ function pickStringList(...values: Array<readonly string[] | string[] | null | u
   return [];
 }
 
+function shouldRenderPreviewValueAsBlock(value: string): boolean {
+  return value.includes("\n") || value.length > 96;
+}
+
+function renderPreviewFieldValue(value: string) {
+  if (shouldRenderPreviewValueAsBlock(value)) {
+    return <pre className="hardening-preview-value">{value}</pre>;
+  }
+  return <div>{value}</div>;
+}
+
+function fallbackCopyText(value: string): boolean {
+  if (typeof document === "undefined") {
+    return false;
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  textarea.style.pointerEvents = "none";
+  document.body.appendChild(textarea);
+  textarea.select();
+  textarea.setSelectionRange(0, textarea.value.length);
+  try {
+    return document.execCommand("copy");
+  } finally {
+    document.body.removeChild(textarea);
+  }
+}
+
+async function copyText(value: string): Promise<boolean> {
+  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(value);
+      return true;
+    } catch {
+      return fallbackCopyText(value);
+    }
+  }
+  return fallbackCopyText(value);
+}
+
 function hardeningSeverityRank(severity: ClawGuardFinding["severity"]): number {
   if (severity === "critical") return 0;
   if (severity === "high") return 1;
@@ -98,6 +140,9 @@ function compareHardeningFindings(left: ClawGuardFinding, right: ClawGuardFindin
 }
 
 function inferHardeningGroupKind(finding: ClawGuardFinding): ClawGuardFindingGroup["kind"] {
+  if (finding.groupId === "workspace" || finding.ruleId.startsWith("workspace_")) {
+    return "workspace";
+  }
   if (finding.groupId === "gateway" || finding.ruleId.startsWith("gateway_")) {
     return "gateway";
   }
@@ -115,80 +160,17 @@ function inferHardeningScopeId(groupId: string, finding?: ClawGuardFinding | nul
   return parts.length > 1 ? parts.slice(1).join("::") : "";
 }
 
-function hardeningRelationHint(finding: ClawGuardFinding, siblingCount: number): string {
-  const relations = finding.relations;
-  const relatedTargets = relations.filter((relation) => relation.type === "related").length;
-  const resolvingChoices = relations.filter((relation) => relation.type === "choice_resolves").length;
-  if (resolvingChoices > 0) {
-    return ui(
-      "这个风险点和别的项有联动，点开详情能看到对应的修复选项。",
-      "This finding is linked with other items. Open the drawer to see the matching repair choices.",
-    );
-  }
-  if (relatedTargets > 0) {
-    return ui(
-      "这个风险点和同组或相邻配置项有关，通常需要一起改。",
-      "This finding is related to other items in the same or nearby scope, and they usually change together.",
-    );
-  }
-  if (siblingCount > 0) {
-    return ui(
-      "这项和同组的其他风险点共享同一个配置范围。",
-      "This item shares the same configuration scope with the rest of its group.",
-    );
-  }
-  return ui("这是单项检查。", "This is a single-item check.");
-}
-
 function hardeningGroupTitle(kind: ClawGuardFindingGroup["kind"], scopeId: string): string {
   if (kind === "gateway") {
-    return ui("gateway 配置", "Gateway settings");
+    return ui("gateway 与运行时", "Gateway and runtime");
   }
   if (kind === "sandbox") {
     return ui("沙箱配置", "Sandbox settings");
   }
+  if (kind === "workspace") {
+    return "SOUL.md";
+  }
   return `${ui("渠道", "Channel")} · ${scopeId || ui("未命名", "Unnamed")}`;
-}
-
-function hardeningGroupSubtitle(kind: ClawGuardFindingGroup["kind"], scopeId: string, count: number): string {
-  const base =
-    kind === "gateway"
-      ? ui("gateway 入口和鉴权", "Gateway entry and auth")
-      : kind === "channel"
-        ? `${ui("同一渠道", "Same channel")} · ${scopeId || ui("未命名", "Unnamed")}`
-        : ui("执行沙箱", "Execution sandbox");
-  return count > 1 ? ui(`${base}，共 ${count} 项`, `${base}, ${count} findings`) : base;
-}
-
-function defaultHardeningGroupSummary(kind: ClawGuardFindingGroup["kind"]): string {
-  if (kind === "gateway") {
-    return ui(
-      "这组项都在 gateway 入口层，通常会一起检查。",
-      "These items all sit at the gateway entry layer and are usually checked together.",
-    );
-  }
-  if (kind === "channel") {
-    return ui(
-      "同一渠道里的私信、群入口和群内限制会互相影响。",
-      "DM access, group access, and in-group limits on the same channel affect each other.",
-    );
-  }
-  return ui(
-    "这组项一起决定执行是否被关进沙箱。",
-    "These items together decide how tightly execution is sandboxed.",
-  );
-}
-
-function hardeningGroupSummary(
-  kind: ClawGuardFindingGroup["kind"],
-  activeCount: number,
-  exemptedCount: number,
-  baseSummary?: string,
-): string {
-  const base = pickText(defaultHardeningGroupSummary(kind), baseSummary);
-  const activeSuffix = activeCount > 1 ? ui(`当前有 ${activeCount} 个未豁免风险点。`, `${activeCount} active findings.`) : "";
-  const exemptedSuffix = exemptedCount > 0 ? ui(`其中 ${exemptedCount} 项已豁免。`, `${exemptedCount} are exempted.`) : "";
-  return [base, activeSuffix, exemptedSuffix].filter(Boolean).join(" ");
 }
 
 function buildFallbackGroup(finding: ClawGuardFinding): HardeningDisplayGroup {
@@ -198,9 +180,6 @@ function buildFallbackGroup(finding: ClawGuardFinding): HardeningDisplayGroup {
     id: finding.groupId,
     kind,
     title: hardeningGroupTitle(kind, scopeId),
-    subtitle: hardeningGroupSubtitle(kind, scopeId, 1),
-    summary: hardeningGroupSummary(kind, 1, 0),
-    relationHint: hardeningRelationHint(finding, 0),
     findings: [finding],
     severity: finding.severity,
     exemptedCount: 0,
@@ -230,9 +209,6 @@ function buildDisplayGroups(status: ClawGuardStatusPayload | null): HardeningDis
       id: group.id,
       kind: group.kind,
       title: pickText(hardeningGroupTitle(group.kind, scopeId), group.title),
-      subtitle: hardeningGroupSubtitle(group.kind, scopeId, groupFindings.length),
-      summary: hardeningGroupSummary(group.kind, groupFindings.length, exemptedCount, group.summary),
-      relationHint: hardeningRelationHint(leadFinding, Math.max(0, groupFindings.length - 1)),
       findings: groupFindings,
       severity: group.severity,
       exemptedCount,
@@ -394,6 +370,7 @@ export function HardeningPanel({
   formatTime,
 }: HardeningPanelProps) {
   const [readOnlyInfoOpen, setReadOnlyInfoOpen] = useState(false);
+  const [copiedTemplateId, setCopiedTemplateId] = useState("");
   const findingGroups = useMemo(() => buildDisplayGroups(status), [status]);
   const exemptedFindings = useMemo(
     () => (Array.isArray(status?.exempted) ? status.exempted : []),
@@ -426,6 +403,8 @@ export function HardeningPanel({
         : [];
   const currentValue = pickText("-", preview?.current_value, selectedFinding?.currentSummary);
   const recommendedValue = pickText("-", preview?.recommended_value, selectedFinding?.recommendationSummary);
+  const referenceTemplates = Array.isArray(preview?.reference_templates) ? preview.reference_templates : [];
+  const isReferenceTemplateScene = referenceTemplates.length > 0;
   const restartRequired = preview?.restart_required ?? selectedFinding?.restartRequired ?? false;
   const impact = pickText(
     restartRequired
@@ -523,6 +502,21 @@ export function HardeningPanel({
     }
   }, [status?.read_only]);
 
+  useEffect(() => {
+    if (!copiedTemplateId) {
+      return undefined;
+    }
+    const timer = window.setTimeout(() => setCopiedTemplateId(""), 1500);
+    return () => window.clearTimeout(timer);
+  }, [copiedTemplateId]);
+
+  async function handleCopyTemplate(template: ReferenceTemplate) {
+    const copied = await copyText(template.content);
+    if (copied) {
+      setCopiedTemplateId(template.id);
+    }
+  }
+
   return (
     <>
       <section
@@ -538,8 +532,8 @@ export function HardeningPanel({
               <h2>{ui("系统", "System")}</h2>
               <p className="skills-intro">
                 {ui(
-                  "这里专门检查 OpenClaw 基础配置里的高价值风险项，并给出单项修复入口。",
-                  "This page checks high-value risks in the base OpenClaw config and provides a per-item repair entry."
+                  "这里专门检查 OpenClaw 基础配置和 SOUL.md 里的高价值风险项，并给出单项修复或人工处理入口。",
+                  "This page checks high-value risks in the base OpenClaw config and SOUL.md, then provides a per-item repair or manual review entry."
                 )}
               </p>
             </div>
@@ -636,14 +630,6 @@ export function HardeningPanel({
                           ) : null}
                         </div>
                         <h3>{group.title}</h3>
-                        <p>{group.summary}</p>
-                        <p className="hardening-group-subtitle">{group.subtitle}</p>
-                        {group.relationHint ? (
-                          <div className="hardening-relation-card">
-                            <strong>{ui("关联提示", "Related hint")}</strong>
-                            <p>{group.relationHint}</p>
-                          </div>
-                        ) : null}
                       </div>
                       <div className="hardening-group-actions">
                         <button
@@ -687,10 +673,6 @@ export function HardeningPanel({
                             <div className="hardening-child-copy">
                               <h3>{finding.title}</h3>
                               <p>{finding.summary}</p>
-                              <div className="hardening-child-hint">
-                                <strong>{ui("关联说明", "Relation note")}</strong>
-                                <p>{hardeningRelationHint(finding, group.findings.length - 1)}</p>
-                              </div>
                             </div>
                             <div className="hardening-item-grid">
                               <div className="hardening-item-block">
@@ -759,8 +741,8 @@ export function HardeningPanel({
                           </div>
                           <div className="hardening-item-grid">
                             <div className="hardening-item-block">
-                              <span>{ui("豁免来源", "Exemption Source")}</span>
-                              <strong>{group.subtitle}</strong>
+                              <span>{ui("所属分类", "Group")}</span>
+                              <strong>{group.title}</strong>
                             </div>
                             <div className="hardening-item-block">
                               <span>{ui("当前状态", "Current State")}</span>
@@ -842,20 +824,15 @@ export function HardeningPanel({
             <div className="hardening-drawer-content">
               {relatedResolutionHints.length > 0 ? (
                 <div className="hardening-relation-card">
-                  <strong>{ui("关联修复提示", "Related resolution hints")}</strong>
+                  <strong>{ui("关联项", "Related items")}</strong>
                   <div className="hardening-relation-list">
                     {relatedResolutionHints.map(({ relation, target, choiceLabel }) => (
                       <div key={`${relation.type}:${target.id}:${relation.choiceId || ""}`} className="hardening-relation-item">
                         <span className="tag meta-tag">
                           {relation.type === "choice_resolves" ? ui("选项联动", "Choice-linked") : ui("关联项", "Related")}
                         </span>
-                        <span>
-                          {choiceLabel ? `${choiceLabel} · ` : ""}
-                          {ui(
-                            `查看修复时会顺带影响 ${target.title}`,
-                            `The repair flow also affects ${target.title}`,
-                          )}
-                        </span>
+                        {choiceLabel ? <span className="tag meta-tag">{choiceLabel}</span> : null}
+                        <span>{target.title}</span>
                       </div>
                     ))}
                   </div>
@@ -897,11 +874,11 @@ export function HardeningPanel({
                 <div className="hardening-preview-grid">
                   <div className="hardening-preview-field">
                     <span>{ui("当前值", "Current Value")}</span>
-                    <div>{currentValue}</div>
+                    {renderPreviewFieldValue(currentValue)}
                   </div>
                   <div className="hardening-preview-field">
                     <span>{ui("推荐值", "Recommended Value")}</span>
-                    <div>{recommendedValue}</div>
+                    {renderPreviewFieldValue(recommendedValue)}
                   </div>
                   <div className="hardening-preview-field">
                     <span>{ui("预估影响", "Expected Impact")}</span>
@@ -921,7 +898,30 @@ export function HardeningPanel({
                   </div>
                 </div>
 
-                {status?.read_only ? (
+                {referenceTemplates.length > 0 ? (
+                  <div className="hardening-patch-card">
+                    <div className="hardening-patch-head">
+                      <strong>{ui("推荐模板", "Suggested Template")}</strong>
+                    </div>
+                    <div className="hardening-template-list">
+                      {referenceTemplates.map((template) => (
+                        <section key={template.id} className="hardening-template-item">
+                          <div className="hardening-template-head">
+                            <strong>{template.label}</strong>
+                            <div className="hardening-template-actions">
+                              <button className="ghost small" type="button" onClick={() => void handleCopyTemplate(template)}>
+                                {copiedTemplateId === template.id ? ui("已复制", "Copied") : ui("复制", "Copy")}
+                              </button>
+                            </div>
+                          </div>
+                          <pre className="hardening-patch-preview hardening-template-preview">{template.content}</pre>
+                        </section>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+
+                {status?.read_only && !isReferenceTemplateScene ? (
                   <div className="hardening-manual-card">
                     <div className="hardening-manual-head">
                       <strong>{ui("手动处理建议", "Manual Repair Steps")}</strong>
@@ -980,31 +980,35 @@ export function HardeningPanel({
                   </div>
                 ) : null}
 
-                <div className="hardening-patch-card">
-                  <div className="hardening-patch-head">
-                    <strong>{ui("变更预览", "Patch Preview")}</strong>
-                    {restartRequired ? <span className="tag meta-tag">{ui("需要重启 gateway", "Gateway Restart Required")}</span> : null}
+                {!isReferenceTemplateScene ? (
+                  <div className="hardening-patch-card">
+                    <div className="hardening-patch-head">
+                      <strong>{ui("变更预览", "Patch Preview")}</strong>
+                      {restartRequired ? <span className="tag meta-tag">{ui("需要重启 gateway", "Gateway Restart Required")}</span> : null}
+                    </div>
+                    <pre className="hardening-patch-preview">{patchPreviewText}</pre>
                   </div>
-                  <pre className="hardening-patch-preview">{patchPreviewText}</pre>
-                </div>
+                ) : null}
 
-                {applyDisabledReason ? (
+                {applyDisabledReason && !isReferenceTemplateScene ? (
                   <div className="hardening-preview-warning">{applyDisabledReason}</div>
                 ) : null}
 
-                <div className="confirm-dialog-actions">
-                  <button className="ghost small" type="button" onClick={onClosePreview}>
-                    {ui("取消", "Cancel")}
-                  </button>
-                  <button
-                    className="primary small"
-                    type="button"
-                    disabled={applyDisabled}
-                    onClick={() => void onApplyPreview()}
-                  >
-                    {applyButtonLabel}
-                  </button>
-                </div>
+                {!isReferenceTemplateScene ? (
+                  <div className="confirm-dialog-actions">
+                    <button className="ghost small" type="button" onClick={onClosePreview}>
+                      {ui("取消", "Cancel")}
+                    </button>
+                    <button
+                      className="primary small"
+                      type="button"
+                      disabled={applyDisabled}
+                      onClick={() => void onApplyPreview()}
+                    >
+                      {applyButtonLabel}
+                    </button>
+                  </div>
+                ) : null}
               </div>
             </div>
           </div>

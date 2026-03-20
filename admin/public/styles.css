@@ -513,6 +513,17 @@ button.ghost {
   height: 100%;
 }
 
+.overview-focus-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  align-items: stretch;
+}
+
+.overview-focus-grid > .panel-card {
+  height: 100%;
+}
+
 .overview-charts {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -892,7 +903,6 @@ button.ghost {
 }
 
 .overview-skill-card {
-  grid-column: 1 / -1;
   display: grid;
   gap: 16px;
 }
@@ -1000,7 +1010,8 @@ button.ghost {
 }
 
 .trend-card {
-  grid-column: 1 / -1;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  align-content: stretch;
 }
 
 .chart-head {
@@ -1016,6 +1027,11 @@ button.ghost {
 .chart-head h3 {
   margin: 0;
   font-size: 19px;
+}
+
+.overview-focus-grid .chart-head,
+.overview-focus-grid .overview-section-head {
+  min-height: 44px;
 }
 
 .chart-subtitle {
@@ -1041,6 +1057,11 @@ button.ghost {
   box-shadow: var(--shadow-inset);
   padding: 12px 12px 6px;
   position: relative;
+}
+
+.trend-chart-surface {
+  min-height: 300px;
+  height: 100%;
 }
 
 .chart-card .recharts-legend-item-text {
@@ -2239,6 +2260,7 @@ tbody tr:hover {
   background: var(--bg-subtle);
   display: grid;
   gap: 8px;
+  min-width: 0;
 }
 
 .hardening-item-block span,
@@ -2251,9 +2273,21 @@ tbody tr:hover {
 }
 
 .hardening-item-block strong,
-.hardening-preview-field div {
+.hardening-preview-field > div,
+.hardening-preview-field > pre {
   font-size: 14px;
   line-height: 1.6;
+  min-width: 0;
+}
+
+.hardening-preview-value {
+  margin: 0;
+  max-width: 100%;
+  max-height: min(24vh, 220px);
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .hardening-passed-panel {
@@ -2598,6 +2632,37 @@ tbody tr:hover {
   line-height: 1.65;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.hardening-template-list {
+  display: grid;
+  gap: 12px;
+}
+
+.hardening-template-item {
+  display: grid;
+  gap: 10px;
+}
+
+.hardening-template-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.hardening-template-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.hardening-template-preview {
+  max-height: min(34vh, 320px);
+  overflow: auto;
+  overflow-wrap: anywhere;
 }
 
 .hardening-preview-warning {
@@ -3878,12 +3943,12 @@ tbody tr:hover {
     grid-template-columns: 1fr;
   }
 
-  .overview-charts {
+  .overview-focus-grid {
     grid-template-columns: 1fr;
   }
 
-  .trend-card {
-    grid-column: auto;
+  .overview-charts {
+    grid-template-columns: 1fr;
   }
 
   .rules-layout.with-side {

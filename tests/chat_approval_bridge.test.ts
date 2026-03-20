@@ -265,6 +265,137 @@ function seedWarnDecision(dbPath: string, configPath: string, ruleId = "sensitiv
   }
 }
 
+type GatewayHookContextInput = {
+  agentId: string;
+  sessionId: string;
+  sessionKey: string;
+  runId: string;
+  workspaceDir: string;
+  channelId: string;
+};
+
+type ChallengeRuleChainScenario = {
+  ruleId: string;
+  event: {
+    toolName: string;
+    params: Record<string, unknown>;
+  };
+  contextOverrides?: Partial<GatewayHookContextInput>;
+};
+
+const CHALLENGE_RULE_CHAIN_SCENARIOS: ChallengeRuleChainScenario[] = [
+  {
+    ruleId: "sensitive-directory-enumeration-challenge",
+    event: {
+      toolName: "filesystem.search",
+      params: {
+        path: "/Users/liuzhuangm4/Downloads",
+        query: "invoice",
+      },
+    },
+  },
+  {
+    ruleId: "credential-path-access-challenge",
+    event: {
+      toolName: "filesystem.read",
+      params: {
+        path: "/Users/liuzhuangm4/.ssh/id_rsa",
+      },
+    },
+  },
+  {
+    ruleId: "communication-store-access-challenge",
+    event: {
+      toolName: "filesystem.read",
+      params: {
+        path: "/Users/liuzhuangm4/Library/Messages/chat.db",
+      },
+    },
+  },
+  {
+    ruleId: "public-network-egress-challenge",
+    event: {
+      toolName: "network.http",
+      params: {
+        url: "https://api.example.com/v1/events",
+      },
+    },
+  },
+  {
+    ruleId: "sensitive-archive-challenge",
+    event: {
+      toolName: "archive.create",
+      params: {
+        sourcePath: "/tmp/workspace/reports/customer-list.csv",
+        targetPath: "/tmp/workspace/reports/customer-list.zip",
+        note: "customer export package",
+      },
+    },
+  },
+  {
+    ruleId: "critical-control-plane-change-challenge",
+    event: {
+      toolName: "filesystem.write",
+      params: {
+        path: "/tmp/workspace/.github/workflows/deploy.yml",
+        content: "name: deploy",
+      },
+    },
+    contextOverrides: {
+      workspaceDir: "/tmp/workspace",
+    },
+  },
+  {
+    ruleId: "email-content-access-challenge",
+    event: {
+      toolName: "email.read",
+      params: {
+        folder: "inbox",
+        query: "subject:invoice",
+      },
+    },
+  },
+  {
+    ruleId: "sms-content-access-challenge",
+    event: {
+      toolName: "messages.read",
+      params: {
+        body: "帮我看一下昨天的短信记录",
+      },
+    },
+  },
+  {
+    ruleId: "album-sensitive-read-challenge",
+    event: {
+      toolName: "album.read",
+      params: {
+        description: "screenshot of internal console",
+      },
+    },
+  },
+];
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function createGatewayHookContext(
+  scenarioId: string,
+  phase: string,
+  overrides: Partial<GatewayHookContextInput> = {},
+): GatewayHookContextInput {
+  const normalizedId = scenarioId.replace(/[^a-z0-9-]/gi, "-");
+  return {
+    agentId: "main",
+    sessionId: `session-${normalizedId}-${phase}`,
+    sessionKey: `telegram:chat-${normalizedId}`,
+    runId: `run-${normalizedId}-${phase}`,
+    workspaceDir: "/tmp/workspace",
+    channelId: "telegram",
+    ...overrides,
+  };
+}
+
 test("chat approval bridge auto-enables from admin account policies without plugin approval config", async () => {
   const tempDir = mkdtempSync(path.join(os.tmpdir(), "securityclaw-chat-approval-admin-sync-"));
   const configPath = path.join(tempDir, "policy.default.yaml");
@@ -631,6 +762,90 @@ test("warn decisions notify the admin without creating approval buttons", async 
     }
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("challenge policy matrix runs full approval flow for every challenge rule", async (t) => {
+  const config = ConfigManager.fromFile("./config/policy.default.yaml").getConfig();
+  const challengePolicies = config.policies
+    .filter((policy) => policy.enabled && policy.decision === "challenge");
+  const expectedRuleIds = challengePolicies.map((policy) => policy.rule_id).sort();
+  const scenarioRuleIds = CHALLENGE_RULE_CHAIN_SCENARIOS.map((scenario) => scenario.ruleId).sort();
+  assert.deepEqual(
+    scenarioRuleIds,
+    expectedRuleIds,
+    "Challenge matrix must cover every enabled challenge rule",
+  );
+
+  const challengePolicyMap = new Map(challengePolicies.map((policy) => [policy.rule_id, policy]));
+
+  for (const scenario of CHALLENGE_RULE_CHAIN_SCENARIOS) {
+    await t.test(scenario.ruleId, async () => {
+      const tempDir = mkdtempSync(path.join(os.tmpdir(), `securityclaw-chat-challenge-matrix-${scenario.ruleId}-`));
+      const configPath = path.join(tempDir, "policy.default.yaml");
+      const dbPath = path.join(tempDir, "securityclaw.db");
+      const statusPath = path.join(tempDir, "securityclaw-status.json");
+
+      try {
+        copyFileSync("./config/policy.default.yaml", configPath);
+        seedAdminAccountPolicy(dbPath);
+
+        const harness = createPluginApiHarness({ configPath, dbPath, statusPath });
+        await plugin.register(harness.api);
+
+        const beforeToolCall = harness.hooks.get("before_tool_call") as BeforeToolCallHook | undefined;
+        assert.ok(beforeToolCall);
+
+        const blocked = await beforeToolCall(
+          scenario.event,
+          createGatewayHookContext(scenario.ruleId, "blocked", scenario.contextOverrides),
+        );
+
+        assert.deepEqual(blocked?.block, true);
+        const policy = challengePolicyMap.get(scenario.ruleId);
+        assert.ok(policy);
+        for (const reasonCode of policy.reason_codes) {
+          assert.match(String(blocked?.blockReason), new RegExp(escapeRegExp(reasonCode)));
+        }
+        const approvalId = extractApprovalId(blocked?.blockReason);
+        assert.ok(approvalId);
+
+        assert.equal(harness.sentMessages.length, 1);
+        assert.equal(harness.sentMessages[0]?.to, "secops-admin");
+        assert.match(String(harness.sentMessages[0]?.text), /(SecurityClaw Approval|SecurityClaw 审批请求)/);
+        assert.match(String(harness.sentMessages[0]?.text), new RegExp(escapeRegExp(scenario.ruleId)));
+        const buttons = harness.sentMessages[0]?.opts?.buttons as Array<Array<{ text: string }>> | undefined;
+        assert.ok(buttons?.length);
+
+        const approveCommand = harness.commands.get("securityclaw-approve");
+        assert.ok(approveCommand);
+        const approveReply = await approveCommand!.handler({
+          channel: "telegram",
+          senderId: "secops-admin",
+          from: "telegram:secops-admin",
+          isAuthorizedSender: true,
+          args: approvalId,
+          commandBody: `/securityclaw-approve ${approvalId}`,
+          config: harness.api.config,
+        });
+        assert.match(String(approveReply.text), /(Temporary grant|临时授权)/);
+
+        const approved = await beforeToolCall(
+          scenario.event,
+          createGatewayHookContext(scenario.ruleId, "approved", scenario.contextOverrides),
+        );
+
+        assert.equal(approved, undefined);
+        assert.equal(harness.sentMessages.length, 1);
+
+        const gatewayStop = harness.hooks.get("gateway_stop") as GatewayStopHook | undefined;
+        if (gatewayStop) {
+          await gatewayStop({}, {});
+        }
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    });
   }
 });
 

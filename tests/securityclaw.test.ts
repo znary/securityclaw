@@ -64,7 +64,7 @@ function findRule(config: SecurityClawConfig, ruleId: string) {
 test("config loader reads default YAML and keeps policies", () => {
   const config = createConfig();
   assert.equal(config.version, "1.0");
-  assert.equal(config.policies.length, 17);
+  assert.equal(config.policies.length, 15);
   assert.deepEqual(config.file_rules, []);
   assert.equal(config.hooks.before_tool_call.fail_mode, "close");
   assert.equal(config.dlp.patterns[0].name, "email");
@@ -188,13 +188,6 @@ test("default policy matrix covers every configured rule", async (t) => {
       operation: "execute",
       tool_args_summary: "rm -rf /tmp/demo"
     },
-    "untrusted-execution-challenge": {
-      tool_name: "shell.exec",
-      tool_group: "execution",
-      operation: "execute",
-      tool_args_summary: "echo hello",
-      trust_level: "untrusted"
-    },
     "workspace-outside-write-block": {
       tool_name: "filesystem.write",
       tool_group: "filesystem",
@@ -285,12 +278,6 @@ test("default policy matrix covers every configured rule", async (t) => {
       tool_group: "business",
       operation: "export",
       volume: { record_count: 100 }
-    },
-    "break-glass-exception-challenge": {
-      tool_name: "filesystem.read",
-      tool_group: "filesystem",
-      operation: "read",
-      tags: ["break_glass"]
     }
   };
 
@@ -671,7 +658,31 @@ test("rule matching supports resource scope and path prefix", async () => {
 });
 
 test("approved replay enforces trace-bound single-use requirements", async () => {
-  const plugin = createSecurityClawPlugin({ config: createConfig(), generate_trace_id: () => "trace-break-glass" });
+  const baseConfig = createConfig();
+  const singleUseApprovalRule: SecurityClawConfig["policies"][number] = {
+    rule_id: "single-use-approval-challenge-test",
+    group: "execution_control",
+    control_domain: "execution_control",
+    enabled: true,
+    priority: 999,
+    decision: "challenge",
+    reason_codes: ["SINGLE_USE_APPROVAL_REQUIRED"],
+    approval_requirements: {
+      ticket_required: true,
+      approver_roles: ["secops"],
+      single_use: true,
+      trace_binding: "trace",
+      ttl_seconds: 600,
+    },
+    match: {
+      tool: ["shell.exec"],
+    },
+  };
+  const config: SecurityClawConfig = {
+    ...baseConfig,
+    policies: [singleUseApprovalRule, ...baseConfig.policies],
+  };
+  const plugin = createSecurityClawPlugin({ config, generate_trace_id: () => "trace-single-use-approval" });
   const first = await plugin.hooks.before_tool_call({
     actor_id: "employee",
     workspace: "payments",
@@ -679,7 +690,7 @@ test("approved replay enforces trace-bound single-use requirements", async () =>
     tool_name: "shell.exec",
     tool_group: "execution",
     operation: "execute",
-    tags: ["break_glass"]
+    tool_args_summary: "echo hello"
   });
   assert.equal(first.decision, "challenge");
   assert.ok(first.approval?.approval_id);
@@ -696,7 +707,7 @@ test("approved replay enforces trace-bound single-use requirements", async () =>
     tool_name: "shell.exec",
     tool_group: "execution",
     operation: "execute",
-    tags: ["break_glass"],
+    tool_args_summary: "echo hello",
     approval_id: first.approval.approval_id
   });
   assert.equal(allowed.decision, "allow");
@@ -708,7 +719,7 @@ test("approved replay enforces trace-bound single-use requirements", async () =>
     tool_name: "shell.exec",
     tool_group: "execution",
     operation: "execute",
-    tags: ["break_glass"],
+    tool_args_summary: "echo hello",
     approval_id: first.approval.approval_id
   });
   assert.equal(replay.decision, "block");

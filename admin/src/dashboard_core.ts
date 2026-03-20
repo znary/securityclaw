@@ -10,6 +10,16 @@ export type LocalizedMessage = {
 export type LocalizedMap = Record<string, LocalizedMessage>;
 export type RuleTextField = "title" | "description";
 export type RuleTextOverrides = Record<string, Partial<Record<RuleTextField, LocalizedMessage>>>;
+export type RuleChatMessage = {
+  role: "user" | "system";
+  text: LocalizedMessage;
+};
+export type RuleExplanation = {
+  summary: LocalizedMessage;
+  handling: LocalizedMessage;
+  examples: RuleChatMessage[];
+};
+export type RuleExplanationMap = Record<string, RuleExplanation>;
 
 export const REFRESH_INTERVAL_MS = 15000;
 export const DECISIONS_PER_PAGE = 12;
@@ -449,11 +459,6 @@ export const RULE_IMPACT_EXAMPLES = {
     result: "系统会直接拦截，命令不会落地执行。",
     tip: "先缩小操作范围到具体文件，再改成可审查的分步执行。"
   },
-  "untrusted-execution-challenge": {
-    scene: "执行聊天里收到的陌生命令。",
-    result: "系统会先要求审批，审批通过后才能执行。",
-    tip: "先确认命令来源和用途，再提交审批，避免执行恶意指令。"
-  },
   "workspace-outside-write-block": {
     scene: "删除工作区外目录，或者改写系统目录文件。",
     result: "系统会立即拦截，防止误删系统文件或污染宿主环境。",
@@ -518,12 +523,651 @@ export const RULE_IMPACT_EXAMPLES = {
     scene: "从 CRM/ERP 等系统批量读取或导出大量记录。",
     result: "系统会直接拦截，防止业务数据被一次性带出。",
     tip: "先拆分为小批次、最小字段范围，并走审批或脱敏流程。"
-  },
-  "break-glass-exception-challenge": {
-    scene: "发起紧急例外请求，临时绕过常规规则。",
-    result: "系统会要求单次审批并绑定当前 trace 后才放行。",
-    tip: "仅在紧急故障处置时使用，并在工单里补齐风险说明。"
   }
+};
+
+export const RULE_EXPLANATIONS: RuleExplanationMap = {
+  "high-risk-command-block": {
+    summary: {
+      "zh-CN": "命中删除、提权、下载后执行等高危命令时直接拦截。",
+      en: "Directly blocks destructive deletion, privilege escalation, and download-and-execute commands."
+    },
+    handling: {
+      "zh-CN": "当前处理方式是拦截。",
+      en: "The current handling is block."
+    },
+    examples: [
+      {
+        role: "user",
+        text: {
+          "zh-CN": "磁盘快满了，我想把那整个临时目录直接清掉。",
+          en: "Disk is almost full. I want to wipe that whole temp directory now."
+        }
+      },
+      {
+        role: "system",
+        text: {
+          "zh-CN": "这个请求包含高危删除动作，我会直接拦截。",
+          en: "This request contains a high-risk destructive action, so I will block it."
+        }
+      },
+      {
+        role: "user",
+        text: {
+          "zh-CN": "把这个脚本下载下来后直接执行。",
+          en: "Download this script and execute it."
+        }
+      },
+      {
+        role: "system",
+        text: {
+          "zh-CN": "命中下载后执行模式，系统直接拦截。",
+          en: "This matches a download-and-execute pattern, so the system blocks it."
+        }
+      }
+    ]
+  },
+  "workspace-outside-write-block": {
+    summary: {
+      "zh-CN": "写入或删除工作区外和系统目录时直接拦截。",
+      en: "Blocks writes and deletes outside the workspace or in system paths."
+    },
+    handling: {
+      "zh-CN": "当前处理方式是拦截。",
+      en: "The current handling is block."
+    },
+    examples: [
+      {
+        role: "user",
+        text: {
+          "zh-CN": "我想把生成结果直接写到桌面目录，省得再挪文件。",
+          en: "I want to save the output straight to Desktop so I can skip moving files."
+        }
+      },
+      {
+        role: "system",
+        text: {
+          "zh-CN": "目标路径在工作区外，这类写入会被直接拦截。",
+          en: "The target path is outside the workspace, so this write is blocked."
+        }
+      },
+      {
+        role: "user",
+        text: {
+          "zh-CN": "帮我改 `/etc/hosts`。",
+          en: "Edit `/etc/hosts`."
+        }
+      },
+      {
+        role: "system",
+        text: {
+          "zh-CN": "命中系统目录写入模式，系统直接拦截。",
+          en: "This matches a system-path write, so the system blocks it."
+        }
+      }
+    ]
+  },
+  "sensitive-directory-enumeration-challenge": {
+    summary: {
+      "zh-CN": "枚举凭据、下载区、浏览器资料等敏感目录时先审批。",
+      en: "Requires approval before enumerating sensitive directories such as credentials, downloads, or browser data."
+    },
+    handling: {
+      "zh-CN": "当前处理方式是需确认。",
+      en: "The current handling is approval."
+    },
+    examples: [
+      {
+        role: "user",
+        text: {
+          "zh-CN": "我在排查登录问题，先把 .ssh 目录内容都列出来看看。",
+          en: "I'm troubleshooting login issues and want to list everything in `.ssh` first."
+        }
+      },
+      {
+        role: "system",
+        text: {
+          "zh-CN": "这是敏感目录枚举请求，需要先审批。",
+          en: "This is sensitive directory enumeration, so approval is required."
+        }
+      },
+      {
+        role: "user",
+        text: {
+          "zh-CN": "搜索一下 `Downloads` 目录里的文件。",
+          en: "Search the files under `Downloads`."
+        }
+      },
+      {
+        role: "system",
+        text: {
+          "zh-CN": "目录命中高风险范围，系统先要求审批。",
+          en: "The directory is in a high-risk scope, so the system asks for approval first."
+        }
+      }
+    ]
+  },
+  "credential-path-access-challenge": {
+    summary: {
+      "zh-CN": "读取密钥、令牌和云凭据文件时先审批。",
+      en: "Requires approval before reading key, token, or cloud credential files."
+    },
+    handling: {
+      "zh-CN": "当前处理方式是需确认。",
+      en: "The current handling is approval."
+    },
+    examples: [
+      {
+        role: "user",
+        text: {
+          "zh-CN": "连接一直失败，我想直接看一下本机私钥文件内容。",
+          en: "The connection keeps failing. I want to inspect the local private key file directly."
+        }
+      },
+      {
+        role: "system",
+        text: {
+          "zh-CN": "这属于凭据文件读取场景，必须先审批。",
+          en: "This falls under credential-file access, so approval is required."
+        }
+      },
+      {
+        role: "user",
+        text: {
+          "zh-CN": "读一下 `.env` 里的密钥。",
+          en: "Read the secret values from `.env`."
+        }
+      },
+      {
+        role: "system",
+        text: {
+          "zh-CN": "命中敏感凭据文件，系统先暂停。",
+          en: "This hits a sensitive credential file, so the system pauses for approval."
+        }
+      }
+    ]
+  },
+  "communication-store-access-challenge": {
+    summary: {
+      "zh-CN": "访问本地邮件、消息库和聊天记录时先审批。",
+      en: "Requires approval before accessing local mail, message stores, or chat history."
+    },
+    handling: {
+      "zh-CN": "当前处理方式是需确认。",
+      en: "The current handling is approval."
+    },
+    examples: [
+      {
+        role: "user",
+        text: {
+          "zh-CN": "我在做故障复盘，想把这台机器上的消息历史都拉出来。",
+          en: "I'm doing an incident review and want to pull message history from this machine."
+        }
+      },
+      {
+        role: "system",
+        text: {
+          "zh-CN": "请求涉及本地通信存储访问，需要先审批。",
+          en: "This request accesses local communication storage, so approval is required."
+        }
+      },
+      {
+        role: "user",
+        text: {
+          "zh-CN": "导出聊天记录给我。",
+          en: "Export the chat history."
+        }
+      },
+      {
+        role: "system",
+        text: {
+          "zh-CN": "命中本地通信存储，系统先要求审批。",
+          en: "This hits a local communication store, so the system asks for approval first."
+        }
+      }
+    ]
+  },
+  "public-network-egress-challenge": {
+    summary: {
+      "zh-CN": "访问公网、未知域、网盘或粘贴站点时先审批。",
+      en: "Requires approval before requests to public, unknown, storage, or paste destinations."
+    },
+    handling: {
+      "zh-CN": "当前处理方式是需确认。",
+      en: "The current handling is approval."
+    },
+    examples: [
+      {
+        role: "user",
+        text: {
+          "zh-CN": "我想把这份分析结果直接回传到一个公网接口。",
+          en: "I want to send this analysis result directly to a public API endpoint."
+        }
+      },
+      {
+        role: "system",
+        text: {
+          "zh-CN": "目标是公网地址，外发前需要审批确认。",
+          en: "The destination is public, so outbound delivery needs approval first."
+        }
+      },
+      {
+        role: "user",
+        text: {
+          "zh-CN": "上传到这个个人网盘链接。",
+          en: "Upload to this personal storage link."
+        }
+      },
+      {
+        role: "system",
+        text: {
+          "zh-CN": "命中公网外发规则，先走审批。",
+          en: "This matches public egress, so approval is required."
+        }
+      }
+    ]
+  },
+  "sensitive-public-egress-block": {
+    summary: {
+      "zh-CN": "含机密、PII 或客户数据时，禁止直接外发到公网。",
+      en: "Blocks direct public egress when data is labeled as secret, PII, or customer data."
+    },
+    handling: {
+      "zh-CN": "当前处理方式是拦截。",
+      en: "The current handling is block."
+    },
+    examples: [
+      {
+        role: "user",
+        text: {
+          "zh-CN": "为了给外包同学排查，我打算把客户名单放到公开仓库。",
+          en: "To help an external teammate troubleshoot, I plan to upload the customer list to a public repo."
+        }
+      },
+      {
+        role: "system",
+        text: {
+          "zh-CN": "内容带有客户敏感标签，这类公网外发会被直接拦截。",
+          en: "This content is labeled as customer-sensitive, so public egress is blocked."
+        }
+      },
+      {
+        role: "user",
+        text: {
+          "zh-CN": "把这份含密钥的日志贴到外部站点。",
+          en: "Paste this log with secrets to an external site."
+        }
+      },
+      {
+        role: "system",
+        text: {
+          "zh-CN": "命中敏感外发规则，系统直接拦截。",
+          en: "This hits a sensitive egress rule, so the system blocks it."
+        }
+      }
+    ]
+  },
+  "sensitive-archive-challenge": {
+    summary: {
+      "zh-CN": "归档、压缩或导出敏感内容时先审批。",
+      en: "Requires approval before archiving, compressing, or exporting sensitive content."
+    },
+    handling: {
+      "zh-CN": "当前处理方式是需确认。",
+      en: "The current handling is approval."
+    },
+    examples: [
+      {
+        role: "user",
+        text: {
+          "zh-CN": "业务方催得急，我想先把客户资料整包导出来。",
+          en: "The business team is pushing hard, so I want to export all customer files in one package."
+        }
+      },
+      {
+        role: "system",
+        text: {
+          "zh-CN": "归档内容包含敏感数据，导出前需要审批。",
+          en: "The archive includes sensitive data, so approval is required before export."
+        }
+      },
+      {
+        role: "user",
+        text: {
+          "zh-CN": "压缩这批财务资料发给我。",
+          en: "Compress and send me this financial data."
+        }
+      },
+      {
+        role: "system",
+        text: {
+          "zh-CN": "归档内容带有敏感标签，系统先暂停。",
+          en: "The archive contains sensitive labels, so the system pauses for approval."
+        }
+      }
+    ]
+  },
+  "critical-control-plane-change-challenge": {
+    summary: {
+      "zh-CN": "修改发布、部署、Terraform 或 K8s 文件时先审批。",
+      en: "Requires approval before changing release, deployment, Terraform, or Kubernetes files."
+    },
+    handling: {
+      "zh-CN": "当前处理方式是需确认。",
+      en: "The current handling is approval."
+    },
+    examples: [
+      {
+        role: "user",
+        text: {
+          "zh-CN": "线上要紧急修复，我准备直接改部署文件发版。",
+          en: "We need an urgent production fix, and I plan to edit deployment config and release immediately."
+        }
+      },
+      {
+        role: "system",
+        text: {
+          "zh-CN": "这是关键发布配置变更，请先走审批。",
+          en: "This is a critical release-config change, so approval is required first."
+        }
+      },
+      {
+        role: "user",
+        text: {
+          "zh-CN": "更新 `Dockerfile` 后直接上线。",
+          en: "Update the `Dockerfile` and ship it."
+        }
+      },
+      {
+        role: "system",
+        text: {
+          "zh-CN": "命中关键发布文件，系统先要求审批。",
+          en: "This hits a critical release file, so the system asks for approval first."
+        }
+      }
+    ]
+  },
+  "email-content-access-challenge": {
+    summary: {
+      "zh-CN": "读取邮箱正文、附件或导出邮件时先审批。",
+      en: "Requires approval before reading email content, attachments, or exports."
+    },
+    handling: {
+      "zh-CN": "当前处理方式是需确认。",
+      en: "The current handling is approval."
+    },
+    examples: [
+      {
+        role: "user",
+        text: {
+          "zh-CN": "我先帮你把这封邮件正文和附件都看一遍。",
+          en: "I'll go through the full email body and attachments for you first."
+        }
+      },
+      {
+        role: "system",
+        text: {
+          "zh-CN": "邮件正文/附件读取属于通信内容访问，需要审批。",
+          en: "Reading email body/attachments is communication-content access, so approval is required."
+        }
+      },
+      {
+        role: "user",
+        text: {
+          "zh-CN": "把收件箱里的附件导出来。",
+          en: "Export the attachments from the inbox."
+        }
+      },
+      {
+        role: "system",
+        text: {
+          "zh-CN": "命中邮件导出，系统先暂停。",
+          en: "This hits email export, so the system pauses for approval."
+        }
+      }
+    ]
+  },
+  "sms-content-access-challenge": {
+    summary: {
+      "zh-CN": "读取短信正文、会话历史或导出短信时先审批。",
+      en: "Requires approval before reading SMS content, conversation history, or exports."
+    },
+    handling: {
+      "zh-CN": "当前处理方式是需确认。",
+      en: "The current handling is approval."
+    },
+    examples: [
+      {
+        role: "user",
+        text: {
+          "zh-CN": "我想把最近一周的短信内容都抓出来做分析。",
+          en: "I want to pull SMS content from the past week for analysis."
+        }
+      },
+      {
+        role: "system",
+        text: {
+          "zh-CN": "短信正文读取会触发通信访问规则，需要审批。",
+          en: "Reading SMS bodies triggers communication-access controls, so approval is required."
+        }
+      },
+      {
+        role: "user",
+        text: {
+          "zh-CN": "把这段短信历史导出。",
+          en: "Export this SMS history."
+        }
+      },
+      {
+        role: "system",
+        text: {
+          "zh-CN": "命中短信导出，系统先要求审批。",
+          en: "This hits SMS export, so the system asks for approval first."
+        }
+      }
+    ]
+  },
+  "sms-otp-block": {
+    summary: {
+      "zh-CN": "包含验证码、登录提醒或 OTP 的短信直接拦截。",
+      en: "Directly blocks SMS that contains OTP, verification codes, or login alerts."
+    },
+    handling: {
+      "zh-CN": "当前处理方式是拦截。",
+      en: "The current handling is block."
+    },
+    examples: [
+      {
+        role: "user",
+        text: {
+          "zh-CN": "登录卡住了，帮我把验证码短信内容念出来。",
+          en: "Login is stuck. Please read out the verification-code SMS."
+        }
+      },
+      {
+        role: "system",
+        text: {
+          "zh-CN": "验证码和登录提醒属于高敏短信内容，会被直接拦截。",
+          en: "Verification codes and login alerts are high-sensitivity SMS content and are blocked."
+        }
+      },
+      {
+        role: "user",
+        text: {
+          "zh-CN": "帮我找登录提醒短信。",
+          en: "Find the login-alert SMS."
+        }
+      },
+      {
+        role: "system",
+        text: {
+          "zh-CN": "命中验证码类短信，系统直接拦截。",
+          en: "This hits verification-code SMS, so the system blocks it."
+        }
+      }
+    ]
+  },
+  "album-sensitive-read-challenge": {
+    summary: {
+      "zh-CN": "读取截图、证件照、扫描件或 OCR 图片时先审批。",
+      en: "Requires approval before reading screenshots, ID photos, scans, or OCR-oriented images."
+    },
+    handling: {
+      "zh-CN": "当前处理方式是需确认。",
+      en: "The current handling is approval."
+    },
+    examples: [
+      {
+        role: "user",
+        text: {
+          "zh-CN": "我想从相册里那张截图提取文字发给你。",
+          en: "I want to extract text from that screenshot in the album and send it to you."
+        }
+      },
+      {
+        role: "system",
+        text: {
+          "zh-CN": "截图或 OCR 类相册内容读取会先进入审批。",
+          en: "Reading screenshot or OCR-oriented album content requires approval first."
+        }
+      },
+      {
+        role: "user",
+        text: {
+          "zh-CN": "读取这张证件照里的信息。",
+          en: "Read the information in this ID photo."
+        }
+      },
+      {
+        role: "system",
+        text: {
+          "zh-CN": "命中相册敏感内容，系统先暂停。",
+          en: "This hits sensitive album content, so the system pauses for approval."
+        }
+      }
+    ]
+  },
+  "browser-credential-block": {
+    summary: {
+      "zh-CN": "读取浏览器 Cookie、密码、自动填充信息时直接拦截。",
+      en: "Directly blocks access to browser cookies, passwords, and autofill data."
+    },
+    handling: {
+      "zh-CN": "当前处理方式是拦截。",
+      en: "The current handling is block."
+    },
+    examples: [
+      {
+        role: "user",
+        text: {
+          "zh-CN": "我想复用现成登录态，直接把浏览器 Cookie 导出来。",
+          en: "I want to reuse the current login session and export browser cookies directly."
+        }
+      },
+      {
+        role: "system",
+        text: {
+          "zh-CN": "浏览器凭据数据受保护，这类读取会被直接拦截。",
+          en: "Browser credential data is protected, so this access is blocked."
+        }
+      },
+      {
+        role: "user",
+        text: {
+          "zh-CN": "导出自动填充密码。",
+          en: "Export the autofill passwords."
+        }
+      },
+      {
+        role: "system",
+        text: {
+          "zh-CN": "命中浏览器秘密数据，系统直接拦截。",
+          en: "This hits browser secret data, so the system blocks it."
+        }
+      }
+    ]
+  },
+  "business-system-bulk-read-block": {
+    summary: {
+      "zh-CN": "从 CRM、ERP、财务或客服系统批量读取时直接拦截。",
+      en: "Directly blocks bulk reads from CRM, ERP, finance, or support systems."
+    },
+    handling: {
+      "zh-CN": "当前处理方式是拦截。",
+      en: "The current handling is block."
+    },
+    examples: [
+      {
+        role: "user",
+        text: {
+          "zh-CN": "开会前我想把 CRM 全量客户数据先导出来。",
+          en: "Before the meeting, I want to export the full customer dataset from CRM."
+        }
+      },
+      {
+        role: "system",
+        text: {
+          "zh-CN": "这是业务系统批量读取场景，会被直接拦截。",
+          en: "This is a bulk read scenario in a business system, so it is blocked."
+        }
+      },
+      {
+        role: "user",
+        text: {
+          "zh-CN": "读取财务系统里的 100 条订单。",
+          en: "Read 100 orders from the finance system."
+        }
+      },
+      {
+        role: "system",
+        text: {
+          "zh-CN": "命中批量导出模式，系统直接拦截。",
+          en: "This hits a bulk export pattern, so the system blocks it."
+        }
+      }
+    ]
+  }
+};
+
+const RULE_EXPLANATION_FALLBACK: RuleExplanation = {
+  summary: {
+    "zh-CN": "这条规则用于说明什么请求会命中它。",
+    en: "This rule explains which requests will match it."
+  },
+  handling: {
+    "zh-CN": "当前处理方式按规则里的默认动作执行。",
+    en: "The current handling follows the rule's default action."
+  },
+  examples: [
+    {
+      role: "user",
+      text: {
+        "zh-CN": "这个请求会不会命中这条规则？",
+        en: "Will this request match the rule?"
+      }
+    },
+    {
+      role: "system",
+      text: {
+        "zh-CN": "如果请求条件和匹配项一致，就会命中。",
+        en: "If the request matches the rule conditions, it will trigger."
+      }
+    },
+    {
+      role: "user",
+      text: {
+        "zh-CN": "那没命中的话会怎样？",
+        en: "What happens if it does not match?"
+      }
+    },
+    {
+      role: "system",
+      text: {
+        "zh-CN": "不会走这条规则，会继续匹配其他策略。",
+        en: "This rule is skipped and other policies continue to evaluate."
+      }
+    }
+  ]
 };
 
 export const RULE_TEXT_OVERRIDES: RuleTextOverrides = {
@@ -532,13 +1176,6 @@ export const RULE_TEXT_OVERRIDES: RuleTextOverrides = {
     description: {
       "zh-CN": "阻断删除、权限递归修改、下载后执行、提权和停用系统审计等高危命令模式。",
       en: "Blocks high-risk command patterns such as destructive deletion, recursive permission changes, download-and-execute behavior, privilege escalation, and audit shutdown commands."
-    }
-  },
-  "untrusted-execution-challenge": {
-    title: { "zh-CN": "未受信输入驱动执行需审批", en: "Approval Required for Untrusted Execution" },
-    description: {
-      "zh-CN": "当未受信内容直接驱动执行类操作时，要求一次性、绑定 trace 的审批。",
-      en: "Requires single-use, trace-bound approval when execution is directly driven by untrusted inputs."
     }
   },
   "workspace-outside-write-block": {
@@ -633,13 +1270,6 @@ export const RULE_TEXT_OVERRIDES: RuleTextOverrides = {
     description: {
       "zh-CN": "CRM、ERP、HR、财务、工单与客服系统的批量读取或导出默认拦截。",
       en: "Blocks bulk read/export actions from CRM, ERP, HR, finance, ticketing, and customer-support systems."
-    }
-  },
-  "break-glass-exception-challenge": {
-    title: { "zh-CN": "紧急例外请求需单次审批", en: "Emergency Exception Requires Single-Use Approval" },
-    description: {
-      "zh-CN": "显式请求紧急例外或策略破例时，要求工单、审批人角色和单次 trace 绑定。",
-      en: "Requires a ticket, approver role, and single-use trace binding when requesting an emergency/policy exception."
     }
   }
 };
@@ -749,4 +1379,9 @@ export function localizedRuleField(ruleId: string | null | undefined, field: Rul
   const fieldValue = item?.[field];
   if (!fieldValue) return undefined;
   return fieldValue[activeLocale] || fieldValue.en || fieldValue["zh-CN"];
+}
+
+export function ruleExplanation(ruleId: string | null | undefined): RuleExplanation {
+  if (!ruleId) return RULE_EXPLANATION_FALLBACK;
+  return RULE_EXPLANATIONS[ruleId] || RULE_EXPLANATION_FALLBACK;
 }

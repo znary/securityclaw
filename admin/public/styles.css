@@ -2793,7 +2793,7 @@ tbody tr:hover {
   flex: 0 0 auto;
   align-items: center;
   justify-content: flex-end;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
@@ -2801,7 +2801,7 @@ tbody tr:hover {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
 }
 
 .rule-row {
@@ -3016,6 +3016,67 @@ tbody tr:hover {
 
 .rule-message p {
   margin: 4px 0 0;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.rule-detail-modal {
+  width: min(900px, 100%);
+  border-color: var(--brand-soft-strong);
+  background: linear-gradient(180deg, var(--bg-elevated) 0%, var(--bg-panel-muted) 100%);
+}
+
+.rule-detail-chat-panel {
+  padding: 16px 18px;
+  border-radius: var(--radius-md);
+  border-color: var(--brand-soft-strong);
+  background: linear-gradient(180deg, var(--bg-subtle) 0%, var(--bg-elevated) 100%);
+  gap: 12px;
+}
+
+.rule-detail-chat-panel h5 {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--ink);
+}
+
+.rule-detail-chat-turn {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line-soft);
+  background: var(--surface-ghost);
+}
+
+.rule-detail-chat-turn + .rule-detail-chat-turn {
+  margin-top: 2px;
+}
+
+.rule-detail-chat-panel .rule-message {
+  max-width: min(92%, 640px);
+}
+
+.rule-intervention {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px dashed var(--brand-soft-strong);
+  background: linear-gradient(180deg, var(--brand-soft) 0%, var(--bg-subtle) 100%);
+}
+
+.rule-intervention strong {
+  font-size: 12px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--brand);
+}
+
+.rule-intervention p {
+  margin: 0;
+  color: var(--muted);
   font-size: 13px;
   line-height: 1.6;
 }

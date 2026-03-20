@@ -49,33 +49,6 @@ policies:
         - '(^|\W)(sudo|doas|pkexec)\b'
         - '(launchctl\s+unload|systemctl\s+(stop|disable))'
 
-  - rule_id: "untrusted-execution-challenge"
-    group: "execution_control"
-    control_domain: "execution_control"
-    title: "未受信输入驱动执行需审批"
-    description: "当未受信内容直接驱动执行类操作时，要求一次性、绑定 trace 的审批。"
-    severity: "high"
-    owner: "security"
-    playbook_url: "https://docs.securityclaw.local/playbooks/untrusted-execution"
-    enabled: true
-    priority: 300
-    decision: "challenge"
-    reason_codes:
-      - "UNTRUSTED_EXECUTION_REQUIRES_APPROVAL"
-    approval_requirements:
-      ticket_required: true
-      approver_roles:
-        - "secops"
-        - "security-lead"
-      single_use: true
-      trace_binding: "trace"
-      ttl_seconds: 600
-    match:
-      trust_level:
-        - "untrusted"
-      tool_group:
-        - "execution"
-
   - rule_id: "workspace-outside-write-block"
     group: "data_access"
     control_domain: "data_access"
@@ -445,31 +418,6 @@ policies:
         - "search"
         - "export"
       min_record_count: 50
-
-  - rule_id: "break-glass-exception-challenge"
-    group: "approval_exception"
-    control_domain: "approval_exception"
-    title: "Break-glass 例外放行需单次审批"
-    description: "显式请求 break-glass 或策略例外时，要求工单、审批人角色和单次 trace 绑定。"
-    severity: "critical"
-    owner: "security"
-    playbook_url: "https://docs.securityclaw.local/playbooks/break-glass"
-    enabled: true
-    priority: 330
-    decision: "challenge"
-    reason_codes:
-      - "BREAK_GLASS_REQUIRES_APPROVAL"
-    approval_requirements:
-      ticket_required: true
-      approver_roles:
-        - "secops"
-        - "security-lead"
-      single_use: true
-      trace_binding: "trace"
-      ttl_seconds: 300
-    match:
-      tags:
-        - "break_glass"
 dlp:
   on_dlp_hit: "sanitize"
   patterns:

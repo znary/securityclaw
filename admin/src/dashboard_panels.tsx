@@ -224,7 +224,7 @@ export function DashboardShell({
               <img src="/favicon.svg" alt="" className="workspace-favicon" aria-hidden="true" />
               {brandText}
             </div>
-            <div className="tablist" role="tablist" aria-label={ui("后台模块页签", "Dashboard tabs")}>
+            <div className="tablist workspace-tablist" role="tablist" aria-label={ui("后台模块页签", "Dashboard tabs")}>
               {tabItems.map((tab) => (
                 <button
                   key={tab.id}

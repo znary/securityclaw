@@ -364,8 +364,14 @@ button.ghost {
   margin-bottom: 0;
 }
 
-.workspace-title .tablist {
+.workspace-title .workspace-tablist {
   margin-top: 6px;
+}
+
+.workspace-title .workspace-tablist .tab-button {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 0 14px;
 }
 
 .workspace-heading {
@@ -4031,6 +4037,10 @@ tbody tr:hover {
   }
 
   .tab-button {
+    flex: 0 0 auto;
+  }
+
+  .workspace-title .workspace-tablist .tab-button {
     flex: 0 0 auto;
   }
 

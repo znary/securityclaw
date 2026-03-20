@@ -67,3 +67,23 @@ test("account default allow stays inactive until an admin is configured", () => 
   ]);
   assert.equal(active.evaluate("telegram:chat-42")?.decision_source, "account");
 });
+
+test("group sessions are not treated as valid admin accounts", () => {
+  const policies = canonicalizeAccountPolicies([
+    {
+      subject: "agent:main:feishu:group:oc_4626b6abb8e311841083a1d164274578",
+      mode: "apply_rules",
+      is_admin: true,
+      chat_type: "group",
+    },
+    {
+      subject: "telegram:chat-42",
+      mode: "default_allow",
+      is_admin: false,
+    },
+  ]);
+
+  assert.equal(policies.length, 1);
+  assert.equal(policies[0]?.subject, "telegram:chat-42");
+  assert.equal(new AccountPolicyEngine(policies).evaluate("telegram:chat-42"), undefined);
+});

@@ -1,4 +1,5 @@
 import { AccountPolicyEngine } from "../domain/services/account_policy_engine.ts";
+import { isManageableAccountRecord } from "../domain/services/account_subject_classifier.ts";
 import type { AccountPolicyRecord } from "../types.ts";
 import type { OpenClawChatSession } from "./openclaw_session_catalog.ts";
 
@@ -56,11 +57,12 @@ export function mergeAccountPoliciesWithSessions(
   sessions: OpenClawChatSession[],
 ): AccountPolicyRecord[] {
   const normalizedPolicies = AccountPolicyEngine.sanitize(policies);
+  const visibleSessions = sessions.filter((session) => isManageableAccountRecord(session));
   const policyBySubject = new Map(normalizedPolicies.map((policy) => [policy.subject, policy]));
-  const sessionOrder = new Map(sessions.map((session, index) => [session.subject, index]));
+  const sessionOrder = new Map(visibleSessions.map((session, index) => [session.subject, index]));
   const merged: AccountPolicyRecord[] = [];
 
-  for (const session of sessions) {
+  for (const session of visibleSessions) {
     merged.push(createAccountDisplayEntry(session, policyBySubject.get(session.subject)));
     policyBySubject.delete(session.subject);
   }

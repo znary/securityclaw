@@ -50,6 +50,28 @@ test("readManagementStatus reports whether admin configuration is active", () =>
   assert.equal(withAdmin.management_effective, true);
 });
 
+test("readManagementStatus ignores group sessions marked as admin accounts", () => {
+  const management = readManagementStatus({
+    account_policies: [
+      {
+        subject: "agent:main:feishu:group:oc_4626b6abb8e311841083a1d164274578",
+        mode: "apply_rules",
+        is_admin: true,
+        chat_type: "group",
+      },
+    ],
+    strategy: {
+      tool_policy: {
+        capabilities: [],
+      },
+    } as never,
+  });
+
+  assert.equal(management.admin_configured, false);
+  assert.equal(management.admin_subject, undefined);
+  assert.equal(management.management_effective, false);
+});
+
 test("strategy store keeps saved strategy even when admin management is inactive", () => {
   const tempDir = mkdtempSync(path.join(os.tmpdir(), "securityclaw-management-"));
   const dbPath = path.join(tempDir, "securityclaw.db");

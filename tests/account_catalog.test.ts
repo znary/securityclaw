@@ -53,6 +53,46 @@ test("mergeAccountPoliciesWithSessions shows scanned sessions and overlays saved
   assert.equal(merged[1]?.label, "main");
 });
 
+test("mergeAccountPoliciesWithSessions hides group sessions and group account overrides", () => {
+  const merged = mergeAccountPoliciesWithSessions(
+    [
+      {
+        subject: "agent:main:feishu:group:oc_4626b6abb8e311841083a1d164274578",
+        mode: "apply_rules",
+        is_admin: true,
+        chat_type: "group",
+      },
+    ],
+    [
+      {
+        subject: "agent:main:feishu:group:oc_4626b6abb8e311841083a1d164274578",
+        label: "agent:main:feishu:group:oc_4626b6abb8e311841083a1d164274578",
+        session_key: "agent:main:feishu:group:oc_4626b6abb8e311841083a1d164274578",
+        session_id: "session-group",
+        agent_id: "main",
+        channel: "feishu",
+        chat_type: "group",
+        updated_at: "2026-03-20T05:50:00.000Z",
+      },
+      {
+        subject: "feishu:ou_20d3dfae71b68bb041bff70111fd3fb1",
+        label: "ops",
+        session_key: "agent:main:feishu:direct:ou_20d3dfae71b68bb041bff70111fd3fb1",
+        session_id: "session-direct",
+        agent_id: "main",
+        channel: "feishu",
+        chat_type: "direct",
+        updated_at: "2026-03-20T05:49:00.000Z",
+      },
+    ],
+  );
+
+  assert.deepEqual(
+    merged.map((account) => account.subject),
+    ["feishu:ou_20d3dfae71b68bb041bff70111fd3fb1"],
+  );
+});
+
 test("ensureDefaultAdminAccount no longer invents a default admin", () => {
   const sessions = [
     {

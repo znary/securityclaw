@@ -1,4 +1,5 @@
 import type { AccountPolicyMode, AccountPolicyRecord } from "../../types.ts";
+import { isManageableAccountRecord } from "./account_subject_classifier.ts";
 
 export type AccountDecisionOverride = {
   decision: "allow";
@@ -79,7 +80,7 @@ export function sanitizeAccountPolicies(input: unknown): AccountPolicyRecord[] {
   const deduped = new Map<string, AccountPolicyRecord>();
   for (const entry of input) {
     const normalized = normalizePolicyEntry(entry);
-    if (!normalized) {
+    if (!normalized || !isManageableAccountRecord(normalized)) {
       continue;
     }
     deduped.set(normalized.subject, normalized);

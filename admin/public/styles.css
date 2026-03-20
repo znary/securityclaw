@@ -1543,6 +1543,10 @@ tbody tr:hover {
   background: var(--bg-subtle);
 }
 
+.sensitive-path-panel-disabled {
+  opacity: 0.86;
+}
+
 .sensitive-path-head {
   display: flex;
   justify-content: space-between;
@@ -1619,6 +1623,13 @@ tbody tr:hover {
   line-height: 1.6;
 }
 
+.sensitive-path-disabled-note {
+  color: var(--warn);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.6;
+}
+
 .file-rule-operation-group {
   display: flex;
   flex-wrap: wrap;
@@ -1646,6 +1657,12 @@ tbody tr:hover {
   border-color: var(--brand-soft-strong);
   background: linear-gradient(135deg, var(--brand-soft-strong) 0%, var(--brand-soft) 100%);
   box-shadow: var(--shadow-subtle);
+}
+
+.file-rule-operation-chip:disabled {
+  color: var(--muted);
+  background: var(--bg-subtle);
+  box-shadow: none;
 }
 
 .sensitive-path-validation {
@@ -2667,13 +2684,30 @@ tbody tr:hover {
   gap: 10px;
 }
 
+.rule-group.is-disabled {
+  opacity: 0.82;
+}
+
 .rule-group-shell {
   gap: 20px;
+}
+
+.tool-policy-panel {
+  padding: 18px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--line);
+  background: var(--bg-panel-accent);
 }
 
 .rule-capability-list {
   display: grid;
   gap: 24px;
+}
+
+.tool-capability-tablist {
+  width: fit-content;
+  max-width: 100%;
+  flex-wrap: wrap;
 }
 
 .rule-capability-group {
@@ -2759,7 +2793,7 @@ tbody tr:hover {
   flex: 0 0 auto;
   align-items: center;
   justify-content: flex-end;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
@@ -2767,7 +2801,7 @@ tbody tr:hover {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
 }
 
 .rule-row {
@@ -2781,10 +2815,63 @@ tbody tr:hover {
   row-gap: 8px;
 }
 
-.rule-actions {
-  display: flex;
-  flex-wrap: wrap;
+.rule-select-row {
+  display: grid;
   gap: 8px;
+}
+
+.rule-select-field {
+  display: grid;
+  gap: 8px;
+  max-width: 320px;
+}
+
+.rule-select-field span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.rule-select-control {
+  min-height: 44px;
+  width: 100%;
+  padding: 0 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: var(--bg-elevated);
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.rule-inline-info {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+  display: grid;
+  gap: 2px;
+}
+
+.rule-inline-info-label {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.rule-inline-info.allow .rule-inline-info-label {
+  color: var(--good);
+}
+
+.rule-inline-info.warn .rule-inline-info-label,
+.rule-inline-info.challenge .rule-inline-info-label {
+  color: var(--warn);
+}
+
+.rule-inline-info.block .rule-inline-info-label {
+  color: var(--bad);
 }
 
 .rule-action-button {
@@ -2933,6 +3020,67 @@ tbody tr:hover {
   line-height: 1.6;
 }
 
+.rule-detail-modal {
+  width: min(900px, 100%);
+  border-color: var(--brand-soft-strong);
+  background: linear-gradient(180deg, var(--bg-elevated) 0%, var(--bg-panel-muted) 100%);
+}
+
+.rule-detail-chat-panel {
+  padding: 16px 18px;
+  border-radius: var(--radius-md);
+  border-color: var(--brand-soft-strong);
+  background: linear-gradient(180deg, var(--bg-subtle) 0%, var(--bg-elevated) 100%);
+  gap: 12px;
+}
+
+.rule-detail-chat-panel h5 {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--ink);
+}
+
+.rule-detail-chat-turn {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line-soft);
+  background: var(--surface-ghost);
+}
+
+.rule-detail-chat-turn + .rule-detail-chat-turn {
+  margin-top: 2px;
+}
+
+.rule-detail-chat-panel .rule-message {
+  max-width: min(92%, 640px);
+}
+
+.rule-intervention {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px dashed var(--brand-soft-strong);
+  background: linear-gradient(180deg, var(--brand-soft) 0%, var(--bg-subtle) 100%);
+}
+
+.rule-intervention strong {
+  font-size: 12px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--brand);
+}
+
+.rule-intervention p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
 .rule-desc {
   color: var(--muted);
   font-size: 14px;
@@ -2976,6 +3124,41 @@ tbody tr:hover {
 .rule-helper.block {
   border-color: var(--bad-border-soft);
   background: var(--bad-soft);
+}
+
+.management-note,
+.management-status {
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: var(--bg-subtle);
+  display: grid;
+  gap: 6px;
+}
+
+.management-note {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.management-note.good,
+.management-status.good {
+  border-color: var(--good-border-soft);
+  background: var(--good-soft);
+}
+
+.management-note.warn,
+.management-status.warn {
+  border-color: var(--warn-border-soft);
+  background: var(--warn-soft);
+}
+
+.management-status p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .pagination {
@@ -3073,6 +3256,11 @@ tbody tr:hover {
   gap: 16px;
 }
 
+.account-card.active {
+  border-color: var(--brand-soft-strong);
+  box-shadow: var(--shadow-soft-strong);
+}
+
 .account-card-head {
   display: flex;
   justify-content: space-between;
@@ -3147,6 +3335,13 @@ tbody tr:hover {
   width: 16px;
   height: 16px;
   margin: 0;
+}
+
+.admin-access-panel {
+  padding: 18px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--line);
+  background: var(--bg-panel-accent);
 }
 
 .skills-intro,
@@ -3230,6 +3425,24 @@ tbody tr:hover {
   color: var(--ink);
   padding: 0 12px;
   box-shadow: var(--shadow-inset);
+}
+
+#panel-rules select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 36px;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+    linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position:
+    calc(100% - 18px) calc(50% - 1px),
+    calc(100% - 13px) calc(50% - 1px);
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+
+#panel-rules select::-ms-expand {
+  display: none;
 }
 
 .skill-list {

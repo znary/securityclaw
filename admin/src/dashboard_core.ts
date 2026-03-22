@@ -32,7 +32,7 @@ export const ADMIN_DEFAULT_LOCALE = resolveSecurityClawLocale(
 export const ADMIN_DEFAULT_THEME_PREFERENCE: DashboardThemePreference = "system";
 export const DARK_COLOR_SCHEME_QUERY = "(prefers-color-scheme: dark)";
 export const ADMIN_THEME_OPTIONS = new Set<DashboardThemePreference>(["system", "light", "dark"]);
-export const ADMIN_BRAND_TEXT = "SecurityClaw";
+export const ADMIN_BRAND_TEXT = "Security Claw";
 
 let activeLocale: SecurityClawLocale = ADMIN_DEFAULT_LOCALE;
 

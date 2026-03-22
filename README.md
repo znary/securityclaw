@@ -169,14 +169,6 @@ SecurityClaw uses a YAML policy file (`config/policy.default.yaml`) with runtime
 openclaw plugins uninstall securityclaw
 ```
 
-## Documentation
-
-- [Admin Dashboard Guide](./docs/ADMIN_DASHBOARD.md)
-- [Integration Guide](./docs/INTEGRATION_GUIDE.md)
-- [Architecture Overview](./docs/ARCHITECTURE.md)
-- [Operations Runbook](./docs/RUNBOOK.md)
-- [OpenClaw Installation](./docs/OPENCLAW_INSTALL.md)
-
 ## License
 
 MIT. See [LICENSE](./LICENSE).

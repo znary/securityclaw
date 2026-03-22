@@ -169,14 +169,6 @@ SecurityClaw 使用 YAML 策略文件（`config/policy.default.yaml`），运行
 openclaw plugins uninstall securityclaw
 ```
 
-## 文档
-
-- [管理后台指南](./docs/ADMIN_DASHBOARD.md)
-- [集成指南](./docs/INTEGRATION_GUIDE.md)
-- [架构概览](./docs/ARCHITECTURE.md)
-- [运维手册](./docs/RUNBOOK.md)
-- [OpenClaw 安装](./docs/OPENCLAW_INSTALL.md)
-
 ## 许可证
 
 MIT，详见 [LICENSE](./LICENSE)。

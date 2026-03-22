@@ -119,7 +119,7 @@ Access the web UI at `http://127.0.0.1:4780`:
 
 ### Overview
 
-![Overview](./img/en/overview.png)
+![Overview](./img/en/overview.jpeg)
 
 The web-based admin dashboard provides centralized management and visibility into SecurityClaw's protection layers.
 
@@ -127,7 +127,7 @@ The web-based admin dashboard provides centralized management and visibility int
 
 ### 1. Runtime Policy Enforcement
 
-![Tools & Rules](./img/en/tools.png)
+![Tools & Rules](./img/en/tools.jpeg)
 
 Intercepts tool calls at OpenClaw hook points and enforces security decisions:
 
@@ -137,11 +137,11 @@ Intercepts tool calls at OpenClaw hook points and enforces security decisions:
 - **DLP Engine**: Detect and mask PII, credentials, tokens in outputs
 - **Audit Logging**: Structured decision events with trace IDs and reason codes
 
-![Events Log](./img/en/events.png)
+![Events Log](./img/en/events.jpeg)
 
 ### 2. System Hardening (ClawGuard)
 
-![System Hardening](./img/en/system.png)
+![System Hardening](./img/en/system.jpeg)
 
 Scans OpenClaw configuration for security risks and provides automated fixes:
 
@@ -151,11 +151,11 @@ Scans OpenClaw configuration for security risks and provides automated fixes:
 - **Workspace Bootstrap**: Audits SOUL.md for prompt injection defenses
 - **One-Click Remediation**: Generates config patches with preview and rollback
 
-![Apply Fix Dialog](./img/en/system_appy_dialog.png)
+![Apply Fix Dialog](./img/en/system_appy_dialog.jpeg)
 
 ### 3. Plugin Security Analysis
 
-![Plugin Analysis](./img/en/plugins.png)
+![Plugin Analysis](./img/en/plugins.jpeg)
 
 Discovers and analyzes installed OpenClaw plugins:
 
@@ -166,7 +166,7 @@ Discovers and analyzes installed OpenClaw plugins:
 
 ### 4. Skill Interception & Monitoring
 
-![Skill Monitoring](./img/en/skills.png)
+![Skill Monitoring](./img/en/skills.jpeg)
 
 Tracks custom skills for security risks:
 

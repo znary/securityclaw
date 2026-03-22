@@ -120,7 +120,7 @@ openclaw plugins uninstall securityclaw
 
 ### 概览
 
-![概览](./img/cn/overview.png)
+![概览](./img/cn/overview.jpeg)
 
 Web 管理后台提供 SecurityClaw 各防护层的集中管理和可视化。
 
@@ -128,7 +128,7 @@ Web 管理后台提供 SecurityClaw 各防护层的集中管理和可视化。
 
 ### 1. 运行时策略执行
 
-![工具与规则](./img/cn/tools.png)
+![工具与规则](./img/cn/tools.jpeg)
 
 在 OpenClaw Hook 点拦截工具调用并执行安全决策：
 
@@ -138,11 +138,11 @@ Web 管理后台提供 SecurityClaw 各防护层的集中管理和可视化。
 - **DLP 引擎**：检测并脱敏输出中的 PII、凭证、令牌
 - **审计日志**：结构化决策事件，包含 trace ID 和原因码
 
-![事件日志](./img/cn/events.png)
+![事件日志](./img/cn/events.jpeg)
 
 ### 2. 系统加固 (ClawGuard)
 
-![系统加固](./img/cn/system.png)
+![系统加固](./img/cn/system.jpeg)
 
 扫描 OpenClaw 配置中的安全风险并提供自动修复：
 
@@ -152,11 +152,11 @@ Web 管理后台提供 SecurityClaw 各防护层的集中管理和可视化。
 - **工作区引导**：审计 SOUL.md 中的提示注入防护
 - **一键修复**：生成配置补丁，支持预览和回滚
 
-![应用修复对话框](./img/cn/system_apply_dialog.png)
+![应用修复对话框](./img/cn/system_apply_dialog.jpeg)
 
 ### 3. 插件安全分析
 
-![插件分析](./img/cn/plugins.png)
+![插件分析](./img/cn/plugins.jpeg)
 
 发现并分析已安装的 OpenClaw 插件：
 
@@ -167,7 +167,7 @@ Web 管理后台提供 SecurityClaw 各防护层的集中管理和可视化。
 
 ### 4. Skill 拦截与监控
 
-![Skill 监控](./img/cn/skills.png)
+![Skill 监控](./img/cn/skills.jpeg)
 
 跟踪自定义 Skill 的安全风险：
 

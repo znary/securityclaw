@@ -67,47 +67,6 @@ graph TB
     H -.->|Scan & Fix| E1 & E2 & E3
 ```
 
-## Core Capabilities
-
-### 1. Runtime Policy Enforcement
-
-Intercepts tool calls at OpenClaw hook points and enforces security decisions:
-
-- **Policy Rules**: Match by tool, operation, file path, asset label, data sensitivity
-- **File Rules**: Path-based access control with operation-specific decisions
-- **Approval Workflows**: Challenge high-risk operations with multi-channel notifications
-- **DLP Engine**: Detect and mask PII, credentials, tokens in outputs
-- **Audit Logging**: Structured decision events with trace IDs and reason codes
-
-### 2. System Hardening (ClawGuard)
-
-Scans OpenClaw configuration for security risks and provides automated fixes:
-
-- **Gateway Security**: Checks bind address, authentication, service discovery
-- **Sandbox Configuration**: Validates isolation boundaries and tool policies
-- **Channel Access Control**: Reviews DM/group policies and allowlists
-- **Workspace Bootstrap**: Audits SOUL.md for prompt injection defenses
-- **One-Click Remediation**: Generates config patches with preview and rollback
-
-### 3. Plugin Security Analysis
-
-Discovers and analyzes installed OpenClaw plugins:
-
-- **Risk Scoring**: Evaluates source, install location, code signals, dependencies
-- **Code Pattern Detection**: Identifies execution capabilities, network access, file operations
-- **Dependency Surface**: Maps npm dependencies and config requirements
-- **Source Verification**: Flags local path sources and non-registry installs
-
-### 4. Skill Interception & Monitoring
-
-Tracks custom skills for security risks:
-
-- **Content Drift Detection**: Alerts when skill content changes without version updates
-- **Risk Matrix**: Combines skill risk tier with operation severity for dynamic decisions
-- **Quarantine & Trust**: Manual override controls for high-risk or trusted skills
-- **Activity Tracking**: Records skill invocations and interception events
-- **Policy Thresholds**: Configurable score cutoffs and fallback actions
-
 ## Installation
 
 ```bash
@@ -132,9 +91,15 @@ npm run openclaw:dev:install
 npm test
 ```
 
-## Usage
+## Uninstall
 
-### Admin Dashboard
+```bash
+openclaw plugins uninstall securityclaw
+```
+
+## Admin Dashboard
+
+### Features
 
 Access the web UI at `http://127.0.0.1:4780`:
 
@@ -152,7 +117,66 @@ Access the web UI at `http://127.0.0.1:4780`:
 
 **Events Tab**: Audit log of all security decisions with filtering
 
-### Configuration
+### Overview
+
+![Overview](./img/en/overview.png)
+
+The web-based admin dashboard provides centralized management and visibility into SecurityClaw's protection layers.
+
+## Core Capabilities
+
+### 1. Runtime Policy Enforcement
+
+![Tools & Rules](./img/en/tools.png)
+
+Intercepts tool calls at OpenClaw hook points and enforces security decisions:
+
+- **Policy Rules**: Match by tool, operation, file path, asset label, data sensitivity
+- **File Rules**: Path-based access control with operation-specific decisions
+- **Approval Workflows**: Challenge high-risk operations with multi-channel notifications
+- **DLP Engine**: Detect and mask PII, credentials, tokens in outputs
+- **Audit Logging**: Structured decision events with trace IDs and reason codes
+
+![Events Log](./img/en/events.png)
+
+### 2. System Hardening (ClawGuard)
+
+![System Hardening](./img/en/system.png)
+
+Scans OpenClaw configuration for security risks and provides automated fixes:
+
+- **Gateway Security**: Checks bind address, authentication, service discovery
+- **Sandbox Configuration**: Validates isolation boundaries and tool policies
+- **Channel Access Control**: Reviews DM/group policies and allowlists
+- **Workspace Bootstrap**: Audits SOUL.md for prompt injection defenses
+- **One-Click Remediation**: Generates config patches with preview and rollback
+
+![Apply Fix Dialog](./img/en/system_appy_dialog.png)
+
+### 3. Plugin Security Analysis
+
+![Plugin Analysis](./img/en/plugins.png)
+
+Discovers and analyzes installed OpenClaw plugins:
+
+- **Risk Scoring**: Evaluates source, install location, code signals, dependencies
+- **Code Pattern Detection**: Identifies execution capabilities, network access, file operations
+- **Dependency Surface**: Maps npm dependencies and config requirements
+- **Source Verification**: Flags local path sources and non-registry installs
+
+### 4. Skill Interception & Monitoring
+
+![Skill Monitoring](./img/en/skills.png)
+
+Tracks custom skills for security risks:
+
+- **Content Drift Detection**: Alerts when skill content changes without version updates
+- **Risk Matrix**: Combines skill risk tier with operation severity for dynamic decisions
+- **Quarantine & Trust**: Manual override controls for high-risk or trusted skills
+- **Activity Tracking**: Records skill invocations and interception events
+- **Policy Thresholds**: Configurable score cutoffs and fallback actions
+
+## Configuration
 
 SecurityClaw uses a YAML policy file (`config/policy.default.yaml`) with runtime overrides stored in SQLite:
 
@@ -162,12 +186,6 @@ SecurityClaw uses a YAML policy file (`config/policy.default.yaml`) with runtime
 - **DLP Patterns**: Regex patterns for detecting and masking sensitive data
 - **Account Policies**: Per-user/channel access modes and admin privileges
 - **Skill Policy**: Risk thresholds, severity matrix, fallback actions
-
-## Uninstall
-
-```bash
-openclaw plugins uninstall securityclaw
-```
 
 ## License
 

@@ -2,6 +2,8 @@
 
 [English](./README.md)
 
+> **让你在主力电脑放心使用 OpenClaw**
+
 SecurityClaw 是面向 [OpenClaw](https://github.com/openclaw/openclaw) 的综合安全插件，提供运行时策略执行、系统加固和 LLM Agent 风险检测。
 
 ## 解决什么问题

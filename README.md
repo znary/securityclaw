@@ -2,6 +2,8 @@
 
 [中文文档](./README.zh-CN.md)
 
+> **Use OpenClaw on your primary machine with confidence.**
+
 SecurityClaw is a comprehensive security plugin for [OpenClaw](https://github.com/openclaw/openclaw) that provides runtime policy enforcement, system hardening, and risk detection for LLM agents.
 
 ## What Problem Does It Solve?
